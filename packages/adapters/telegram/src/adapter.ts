@@ -15,7 +15,11 @@ import {
   createSessionTopic,
   renameSessionTopic,
 } from "./topics.js";
-import { setupCommands, setupMenuCallbacks } from "./commands.js";
+import {
+  setupCommands,
+  setupMenuCallbacks,
+  buildMenuKeyboard,
+} from "./commands.js";
 import { PermissionHandler } from "./permissions.js";
 import {
   spawnAssistant,
@@ -116,16 +120,31 @@ export class TelegramAdapter extends ChannelAdapter {
       log.error("Failed to spawn assistant:", err);
     }
 
-    // Send welcome message to assistant topic
+    // Send welcome message with menu to assistant topic
     try {
-      await this.bot.api.sendMessage(
-        this.telegramConfig.chatId,
-        `👋 <b>OpenACP is online</b>\nUse /help for commands or chat here.`,
-        {
-          message_thread_id: this.assistantTopicId,
-          parse_mode: "HTML",
-        },
-      );
+      const config = (this.core as OpenACPCore).configManager.get();
+      const agents = (
+        this.core as OpenACPCore
+      ).agentManager.getAvailableAgents();
+      const agentList = agents
+        .map(
+          (a) =>
+            `${escapeHtml(a.name)}${a.name === config.defaultAgent ? " (mặc định)" : ""}`,
+        )
+        .join(", ");
+      const workspace = escapeHtml(config.workspace.baseDir);
+
+      const welcomeText =
+        `Xin chào! Tôi là <b>OpenACP Assistant</b> — trợ lý quản lý phiên coding AI của bạn.\n\n` +
+        `Agents có sẵn: ${agentList}\n` +
+        `Workspace: <code>${workspace}</code>\n\n` +
+        `<b>Chọn một hành động:</b>`;
+
+      await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {
+        message_thread_id: this.assistantTopicId,
+        parse_mode: "HTML",
+        reply_markup: buildMenuKeyboard(),
+      });
     } catch (err) {
       log.warn("Failed to send welcome message:", err);
     }
