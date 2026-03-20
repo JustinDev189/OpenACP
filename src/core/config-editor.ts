@@ -1,0 +1,424 @@
+import { select, input } from '@inquirer/prompts'
+import type { Config, ConfigManager } from './config.js'
+import { validateBotToken, validateChatId } from './setup.js'
+import { installAutoStart, uninstallAutoStart, isAutoStartInstalled, isAutoStartSupported } from './autostart.js'
+import { expandHome } from './config.js'
+
+// ANSI color helpers
+const c = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+}
+
+const ok = (msg: string) => `${c.green}${c.bold}✓${c.reset} ${c.green}${msg}${c.reset}`
+const warn = (msg: string) => `${c.yellow}⚠ ${msg}${c.reset}`
+const dim = (msg: string) => `${c.dim}${msg}${c.reset}`
+const header = (title: string) => `\n${c.cyan}${c.bold}[${title}]${c.reset}\n`
+
+type ConfigUpdates = Record<string, unknown>
+
+// --- Edit: Telegram ---
+
+async function editTelegram(config: Config, updates: ConfigUpdates): Promise<void> {
+  const tg = (config.channels?.telegram ?? {}) as Record<string, unknown>
+  const currentToken = (tg.botToken as string) ?? ''
+  const currentChatId = (tg.chatId as number) ?? 0
+
+  console.log(header('Telegram'))
+  const tokenDisplay = currentToken.length > 12
+    ? currentToken.slice(0, 6) + '...' + currentToken.slice(-6)
+    : currentToken || dim('(not set)')
+  console.log(`  Bot Token : ${tokenDisplay}`)
+  console.log(`  Chat ID   : ${currentChatId || dim('(not set)')}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Telegram settings:',
+      choices: [
+        { name: 'Change Bot Token', value: 'token' },
+        { name: 'Change Chat ID', value: 'chatid' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'token') {
+      const token = await input({
+        message: 'New bot token:',
+        default: currentToken,
+        validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
+      })
+
+      const result = await validateBotToken(token.trim())
+      if (result.ok) {
+        console.log(ok(`Connected to @${result.botUsername}`))
+      } else {
+        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+      }
+
+      if (!updates.channels) updates.channels = {}
+      if (!(updates.channels as Record<string, unknown>).telegram) {
+        (updates.channels as Record<string, unknown>).telegram = {}
+      }
+      ;((updates.channels as Record<string, unknown>).telegram as Record<string, unknown>).botToken = token.trim()
+    }
+
+    if (choice === 'chatid') {
+      const chatIdStr = await input({
+        message: 'New chat ID (e.g. -1001234567890):',
+        default: String(currentChatId),
+        validate: (val) => {
+          const n = Number(val.trim())
+          if (isNaN(n) || !Number.isInteger(n)) return 'Chat ID must be an integer'
+          return true
+        },
+      })
+
+      const chatId = Number(chatIdStr.trim())
+
+      // Use the current (or already-updated) token for validation
+      const tokenForValidation = (() => {
+        if (updates.channels) {
+          const ch = updates.channels as Record<string, unknown>
+          if (ch.telegram) {
+            const tgUp = ch.telegram as Record<string, unknown>
+            if (typeof tgUp.botToken === 'string') return tgUp.botToken
+          }
+        }
+        return currentToken
+      })()
+
+      const result = await validateChatId(tokenForValidation, chatId)
+      if (result.ok) {
+        console.log(ok(`Group: ${result.title}${result.isForum ? '' : warn(' (topics not enabled)')}`))
+      } else {
+        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+      }
+
+      if (!updates.channels) updates.channels = {}
+      if (!(updates.channels as Record<string, unknown>).telegram) {
+        (updates.channels as Record<string, unknown>).telegram = {}
+      }
+      ;((updates.channels as Record<string, unknown>).telegram as Record<string, unknown>).chatId = chatId
+    }
+  }
+}
+
+// --- Edit: Agent ---
+
+async function editAgent(config: Config, updates: ConfigUpdates): Promise<void> {
+  const agentNames = Object.keys(config.agents ?? {})
+  const currentDefault = config.defaultAgent
+
+  console.log(header('Agent'))
+  console.log(`  Default agent : ${c.bold}${currentDefault}${c.reset}`)
+  console.log(`  Available     : ${agentNames.join(', ') || dim('(none)')}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Agent settings:',
+      choices: [
+        { name: 'Change default agent', value: 'default' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'default') {
+      if (agentNames.length === 0) {
+        console.log(warn('No agents configured.'))
+        continue
+      }
+
+      const chosen = await select({
+        message: 'Select default agent:',
+        choices: agentNames.map((name) => ({ name, value: name })),
+      })
+
+      updates.defaultAgent = chosen
+      console.log(ok(`Default agent set to ${chosen}`))
+    }
+  }
+}
+
+// --- Edit: Workspace ---
+
+async function editWorkspace(config: Config, updates: ConfigUpdates): Promise<void> {
+  const currentDir = config.workspace?.baseDir ?? '~/openacp-workspace'
+
+  console.log(header('Workspace'))
+  console.log(`  Base directory : ${currentDir}`)
+  console.log('')
+
+  const newDir = await input({
+    message: 'Workspace base directory:',
+    default: currentDir,
+    validate: (val) => val.trim().length > 0 || 'Path cannot be empty',
+  })
+
+  updates.workspace = { baseDir: newDir.trim() }
+  console.log(ok(`Workspace set to ${newDir.trim()}`))
+}
+
+// --- Edit: Security ---
+
+async function editSecurity(config: Config, updates: ConfigUpdates): Promise<void> {
+  const sec = config.security ?? { allowedUserIds: [], maxConcurrentSessions: 5, sessionTimeoutMinutes: 60 }
+
+  console.log(header('Security'))
+  console.log(`  Allowed user IDs        : ${sec.allowedUserIds?.length ? sec.allowedUserIds.join(', ') : dim('(all users allowed)')}`)
+  console.log(`  Max concurrent sessions : ${sec.maxConcurrentSessions}`)
+  console.log(`  Session timeout (min)   : ${sec.sessionTimeoutMinutes}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Security settings:',
+      choices: [
+        { name: 'Max concurrent sessions', value: 'maxSessions' },
+        { name: 'Session timeout (minutes)', value: 'timeout' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'maxSessions') {
+      const val = await input({
+        message: 'Max concurrent sessions:',
+        default: String(sec.maxConcurrentSessions),
+        validate: (v) => {
+          const n = Number(v.trim())
+          if (!Number.isInteger(n) || n < 1) return 'Must be a positive integer'
+          return true
+        },
+      })
+
+      if (!updates.security) updates.security = {}
+      ;(updates.security as Record<string, unknown>).maxConcurrentSessions = Number(val.trim())
+      console.log(ok(`Max concurrent sessions set to ${val.trim()}`))
+    }
+
+    if (choice === 'timeout') {
+      const val = await input({
+        message: 'Session timeout in minutes:',
+        default: String(sec.sessionTimeoutMinutes),
+        validate: (v) => {
+          const n = Number(v.trim())
+          if (!Number.isInteger(n) || n < 1) return 'Must be a positive integer'
+          return true
+        },
+      })
+
+      if (!updates.security) updates.security = {}
+      ;(updates.security as Record<string, unknown>).sessionTimeoutMinutes = Number(val.trim())
+      console.log(ok(`Session timeout set to ${val.trim()} minutes`))
+    }
+  }
+}
+
+// --- Edit: Logging ---
+
+async function editLogging(config: Config, updates: ConfigUpdates): Promise<void> {
+  const logging = config.logging ?? { level: 'info', logDir: '~/.openacp/logs', maxFileSize: '10m', maxFiles: 7, sessionLogRetentionDays: 30 }
+
+  console.log(header('Logging'))
+  console.log(`  Log level : ${logging.level}`)
+  console.log(`  Log dir   : ${logging.logDir}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Logging settings:',
+      choices: [
+        { name: 'Log level', value: 'level' },
+        { name: 'Log directory', value: 'logDir' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'level') {
+      const level = await select({
+        message: 'Select log level:',
+        choices: [
+          { name: 'silent', value: 'silent' },
+          { name: 'debug', value: 'debug' },
+          { name: 'info', value: 'info' },
+          { name: 'warn', value: 'warn' },
+          { name: 'error', value: 'error' },
+          { name: 'fatal', value: 'fatal' },
+        ],
+      })
+
+      if (!updates.logging) updates.logging = {}
+      ;(updates.logging as Record<string, unknown>).level = level
+      console.log(ok(`Log level set to ${level}`))
+    }
+
+    if (choice === 'logDir') {
+      const dir = await input({
+        message: 'Log directory:',
+        default: logging.logDir,
+        validate: (val) => val.trim().length > 0 || 'Path cannot be empty',
+      })
+
+      if (!updates.logging) updates.logging = {}
+      ;(updates.logging as Record<string, unknown>).logDir = dir.trim()
+      console.log(ok(`Log directory set to ${dir.trim()}`))
+    }
+  }
+}
+
+// --- Edit: Run Mode ---
+
+async function editRunMode(config: Config, updates: ConfigUpdates): Promise<void> {
+  const currentMode = config.runMode ?? 'foreground'
+  const currentAutoStart = config.autoStart ?? false
+  const autoStartInstalled = isAutoStartInstalled()
+  const autoStartSupported = isAutoStartSupported()
+
+  console.log(header('Run Mode'))
+  console.log(`  Current mode : ${c.bold}${currentMode}${c.reset}`)
+  console.log(`  Auto-start   : ${currentAutoStart ? ok('enabled') : dim('disabled')}${autoStartInstalled ? ` ${dim('(installed)')}` : ''}`)
+  console.log('')
+
+  while (true) {
+    const isDaemon = (() => {
+      if ('runMode' in updates) return updates.runMode === 'daemon'
+      return currentMode === 'daemon'
+    })()
+
+    const choices = [
+      isDaemon
+        ? { name: 'Switch to foreground mode', value: 'foreground' }
+        : { name: 'Switch to daemon mode', value: 'daemon' },
+    ]
+
+    if (autoStartSupported) {
+      const autoStartCurrent = (() => {
+        if ('autoStart' in updates) return updates.autoStart as boolean
+        return currentAutoStart
+      })()
+      choices.push({
+        name: autoStartCurrent ? 'Disable auto-start' : 'Enable auto-start',
+        value: 'toggleAutoStart',
+      })
+    }
+
+    choices.push({ name: 'Back', value: 'back' })
+
+    const choice = await select({
+      message: 'Run mode settings:',
+      choices,
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'daemon') {
+      updates.runMode = 'daemon'
+      const logDir = (config.logging?.logDir) ?? '~/.openacp/logs'
+      const result = installAutoStart(expandHome(logDir))
+      if (result.success) {
+        updates.autoStart = true
+        console.log(ok('Switched to daemon mode with auto-start'))
+      } else {
+        console.log(warn(`Switched to daemon mode (auto-start failed: ${result.error})`))
+      }
+    }
+
+    if (choice === 'foreground') {
+      updates.runMode = 'foreground'
+      updates.autoStart = false
+      uninstallAutoStart()
+      console.log(ok('Switched to foreground mode'))
+    }
+
+    if (choice === 'toggleAutoStart') {
+      const autoStartCurrent = (() => {
+        if ('autoStart' in updates) return updates.autoStart as boolean
+        return currentAutoStart
+      })()
+
+      if (autoStartCurrent) {
+        const result = uninstallAutoStart()
+        updates.autoStart = false
+        if (result.success) {
+          console.log(ok('Auto-start disabled'))
+        } else {
+          console.log(warn(`Auto-start uninstall failed: ${result.error}`))
+        }
+      } else {
+        const logDir = (config.logging?.logDir) ?? '~/.openacp/logs'
+        const result = installAutoStart(expandHome(logDir))
+        updates.autoStart = result.success
+        if (result.success) {
+          console.log(ok('Auto-start enabled'))
+        } else {
+          console.log(warn(`Auto-start install failed: ${result.error}`))
+        }
+      }
+    }
+  }
+}
+
+// --- Main Config Editor ---
+
+export async function runConfigEditor(configManager: ConfigManager): Promise<void> {
+  const config = configManager.get()
+  const updates: ConfigUpdates = {}
+
+  console.log(`\n${c.cyan}${c.bold}OpenACP Config Editor${c.reset}`)
+  console.log(dim(`Config: ${configManager.getConfigPath()}`))
+  console.log('')
+
+  try {
+    while (true) {
+      const hasChanges = Object.keys(updates).length > 0
+      const choice = await select({
+        message: `What would you like to edit?${hasChanges ? ` ${c.yellow}(unsaved changes)${c.reset}` : ''}`,
+        choices: [
+          { name: 'Telegram', value: 'telegram' },
+          { name: 'Agent', value: 'agent' },
+          { name: 'Workspace', value: 'workspace' },
+          { name: 'Security', value: 'security' },
+          { name: 'Logging', value: 'logging' },
+          { name: 'Run Mode', value: 'runMode' },
+          { name: hasChanges ? 'Save & Exit' : 'Exit', value: 'exit' },
+        ],
+      })
+
+      if (choice === 'exit') {
+        if (hasChanges) {
+          await configManager.save(updates)
+          console.log(ok(`Config saved to ${configManager.getConfigPath()}`))
+        } else {
+          console.log(dim('No changes made.'))
+        }
+        break
+      }
+
+      if (choice === 'telegram') await editTelegram(config, updates)
+      else if (choice === 'agent') await editAgent(config, updates)
+      else if (choice === 'workspace') await editWorkspace(config, updates)
+      else if (choice === 'security') await editSecurity(config, updates)
+      else if (choice === 'logging') await editLogging(config, updates)
+      else if (choice === 'runMode') await editRunMode(config, updates)
+    }
+  } catch (err) {
+    if ((err as Error).name === 'ExitPromptError') {
+      console.log(dim('\nConfig editor cancelled. Changes discarded.'))
+      return
+    }
+    throw err
+  }
+}
