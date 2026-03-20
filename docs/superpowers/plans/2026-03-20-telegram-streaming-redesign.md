@@ -20,11 +20,9 @@
 - [ ] **Step 1: Create send-queue.ts**
 
 ```typescript
-import { createChildLogger } from '../../core/log.js'
-const log = createChildLogger({ module: 'telegram-queue' })
-
 export class TelegramSendQueue {
   private queue: Promise<void> = Promise.resolve()
+  private lastExec: number = 0
   private minInterval: number
 
   constructor(minInterval = 100) {
@@ -40,12 +38,18 @@ export class TelegramSendQueue {
     })
 
     this.queue = this.queue.then(async () => {
-      await new Promise((r) => setTimeout(r, this.minInterval))
+      // Only delay if not enough time has passed since last execution
+      const elapsed = Date.now() - this.lastExec
+      if (elapsed < this.minInterval) {
+        await new Promise((r) => setTimeout(r, this.minInterval - elapsed))
+      }
       try {
         const result = await fn()
         resolve!(result)
       } catch (err) {
         reject!(err)
+      } finally {
+        this.lastExec = Date.now()
       }
     })
 
@@ -75,7 +79,7 @@ git commit -m "feat(telegram): add TelegramSendQueue for rate limit protection"
 
 - [ ] **Step 1: Add streamThrottleMs field**
 
-Add to `TelegramChannelConfig`:
+Add `streamThrottleMs?: number` to the end of the `TelegramChannelConfig` interface:
 
 ```typescript
 export interface TelegramChannelConfig {
@@ -114,6 +118,7 @@ Replace the entire file with:
 ```typescript
 import type { Bot } from 'grammy'
 import { markdownToTelegramHtml, splitMessage } from './formatting.js'
+import type { TelegramSendQueue } from './send-queue.js'
 
 let nextDraftId = 1
 
@@ -125,13 +130,14 @@ export class MessageDraft {
   private flushPromise: Promise<void> = Promise.resolve()
   private minInterval: number
   private useFallback = false
-  private messageId?: number  // Only used in fallback mode
+  private messageId?: number  // Only set in fallback mode (sendMessageDraft returns true, not Message)
 
   constructor(
     private bot: Bot,
     private chatId: number,
     private threadId: number,
     throttleMs = 200,
+    private sendQueue?: TelegramSendQueue,
   ) {
     this.draftId = nextDraftId++
     this.minInterval = throttleMs
@@ -183,27 +189,37 @@ export class MessageDraft {
   }
 
   private async flushFallback(html: string): Promise<void> {
+    // Route through send queue when available (fallback uses editMessageText which shares rate limits)
+    const exec = this.sendQueue
+      ? <T>(fn: () => Promise<T>) => this.sendQueue!.enqueue(fn)
+      : <T>(fn: () => Promise<T>) => fn()
+
     try {
       if (!this.messageId) {
-        const msg = await this.bot.api.sendMessage(this.chatId, html, {
-          message_thread_id: this.threadId,
-          parse_mode: 'HTML',
-          disable_notification: true,
-        })
+        const msg = await exec(() =>
+          this.bot.api.sendMessage(this.chatId, html, {
+            message_thread_id: this.threadId,
+            parse_mode: 'HTML',
+            disable_notification: true,
+          }),
+        )
         this.messageId = msg.message_id
       } else {
-        await this.bot.api.editMessageText(this.chatId, this.messageId, html, {
-          parse_mode: 'HTML',
-        })
+        await exec(() =>
+          this.bot.api.editMessageText(this.chatId, this.messageId!, html, {
+            parse_mode: 'HTML',
+          }),
+        )
       }
     } catch {
-      // Try plain text
       try {
         if (!this.messageId) {
-          const msg = await this.bot.api.sendMessage(this.chatId, this.buffer.slice(0, 4096), {
-            message_thread_id: this.threadId,
-            disable_notification: true,
-          })
+          const msg = await exec(() =>
+            this.bot.api.sendMessage(this.chatId, this.buffer.slice(0, 4096), {
+              message_thread_id: this.threadId,
+              disable_notification: true,
+            }),
+          )
           this.messageId = msg.message_id
         }
       } catch {
@@ -229,12 +245,12 @@ export class MessageDraft {
       for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i]
         if (i === 0 && this.messageId) {
-          // Fallback mode: edit existing message
+          // Fallback mode only: messageId is only set when using sendMessage+editMessageText
           await this.bot.api.editMessageText(this.chatId, this.messageId, chunk, {
             parse_mode: 'HTML',
           })
         } else {
-          // Send permanent message (replaces draft on first chunk, or new message for splits)
+          // sendMessage replaces the draft (non-fallback) or creates new message (fallback/splits)
           const msg = await this.bot.api.sendMessage(this.chatId, chunk, {
             message_thread_id: this.threadId,
             parse_mode: 'HTML',
@@ -290,15 +306,15 @@ Add import at the top of adapter.ts (after the existing imports):
 import { TelegramSendQueue } from './send-queue.js'
 ```
 
-Add field to `TelegramAdapter` class (after `skillMessages` field at line 89):
+Add field to `TelegramAdapter` class (after the `skillMessages` field):
 
 ```typescript
   private sendQueue = new TelegramSendQueue()
 ```
 
-- [ ] **Step 2: Update MessageDraft construction to pass `streamThrottleMs`**
+- [ ] **Step 2: Update MessageDraft construction to pass `streamThrottleMs` and `sendQueue`**
 
-In the `case "text"` block (~line 322), change the MessageDraft constructor call from:
+In the `case "text"` block, change the MessageDraft constructor call from:
 
 ```typescript
           draft = new MessageDraft(
@@ -316,12 +332,13 @@ to:
             this.telegramConfig.chatId,
             threadId,
             this.telegramConfig.streamThrottleMs,
+            this.sendQueue,
           );
 ```
 
 - [ ] **Step 3: Wrap `tool_call` sendMessage with queue**
 
-In the `case "tool_call"` block (~line 343), change:
+In the `case "tool_call"` block, change:
 
 ```typescript
         const msg = await this.bot.api.sendMessage(
@@ -353,7 +370,7 @@ to:
 
 - [ ] **Step 4: Wrap `tool_update` editMessageText with queue**
 
-In the `case "tool_update"` block (~line 386), change:
+In the `case "tool_update"` block, change:
 
 ```typescript
             await this.bot.api.editMessageText(
@@ -379,41 +396,29 @@ to:
 
 - [ ] **Step 5: Wrap `plan` sendMessage with queue**
 
-In the `case "plan"` block (~line 401), change:
-
-```typescript
-        await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          formatPlan(
-```
-
-to:
+In the `case "plan"` block, wrap the entire `this.bot.api.sendMessage(...)` call:
 
 ```typescript
         await this.sendQueue.enqueue(() =>
           this.bot.api.sendMessage(
             this.telegramConfig.chatId,
             formatPlan(
-```
-
-And close the enqueue wrapper after the sendMessage closing paren — change:
-
-```typescript
-          },
-        );
-```
-
-to:
-
-```typescript
-          },
+              content.metadata as never as {
+                entries: Array<{ content: string; status: string }>;
+              },
+            ),
+            {
+              message_thread_id: threadId,
+              parse_mode: "HTML",
+              disable_notification: true,
+            },
           ),
         );
 ```
 
 - [ ] **Step 6: Wrap `usage` sendMessage with queue**
 
-In the `case "usage"` block (~line 419), wrap similarly:
+In the `case "usage"` block, wrap similarly:
 
 ```typescript
         await this.sendQueue.enqueue(() =>
@@ -437,7 +442,7 @@ In the `case "usage"` block (~line 419), wrap similarly:
 
 - [ ] **Step 7: Wrap `session_end` sendMessage with queue**
 
-In the `case "session_end"` block (~line 442), change:
+In the `case "session_end"` block, change:
 
 ```typescript
         await this.bot.api.sendMessage(
@@ -469,7 +474,7 @@ to:
 
 - [ ] **Step 8: Wrap `error` sendMessage with queue**
 
-In the `case "error"` block (~line 456), change:
+In the `case "error"` block, change:
 
 ```typescript
         await this.bot.api.sendMessage(
@@ -501,7 +506,7 @@ to:
 
 - [ ] **Step 9: Wrap `sendNotification` with queue**
 
-In the `sendNotification` method (~line 499), change:
+In the `sendNotification` method, change:
 
 ```typescript
     await this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
@@ -523,12 +528,62 @@ to:
     );
 ```
 
-- [ ] **Step 10: Verify it compiles**
+- [ ] **Step 10: Wrap `sendSkillCommands` API calls with queue**
+
+In the `sendSkillCommands` method, wrap the `sendMessage` call in the "Create and pin new message" section. Change:
+
+```typescript
+      const msg = await this.bot.api.sendMessage(
+        this.telegramConfig.chatId,
+        text,
+        {
+          message_thread_id: threadId,
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+          disable_notification: true,
+        },
+      );
+```
+
+to:
+
+```typescript
+      const msg = await this.sendQueue.enqueue(() =>
+        this.bot.api.sendMessage(
+          this.telegramConfig.chatId,
+          text,
+          {
+            message_thread_id: threadId,
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+            disable_notification: true,
+          },
+        ),
+      );
+```
+
+- [ ] **Step 11: Wrap `sendPermissionRequest` with queue**
+
+In the `sendPermissionRequest` method, change:
+
+```typescript
+    await this.permissionHandler.sendPermissionRequest(session, request);
+```
+
+to:
+
+```typescript
+    await this.sendQueue.enqueue(() =>
+      this.permissionHandler.sendPermissionRequest(session, request),
+    );
+```
+
+- [ ] **Step 12: Verify it compiles**
 
 Run: `pnpm build`
 Expected: No errors
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add src/adapters/telegram/adapter.ts
