@@ -36,9 +36,8 @@ import {
   escapeHtml,
   formatToolCall,
   formatToolUpdate,
-  formatPlan,
-  formatUsage,
 } from "./formatting.js";
+import { ActivityTracker } from "./activity.js";
 import { TelegramSendQueue } from "./send-queue.js";
 import {
   detectAction,
@@ -98,6 +97,21 @@ export class TelegramAdapter extends ChannelAdapter {
   private assistantTopicId!: number;
   private skillMessages: Map<string, number> = new Map(); // sessionId → pinned messageId
   private sendQueue = new TelegramSendQueue(3000)
+  private sessionTrackers: Map<string, ActivityTracker> = new Map()
+
+  private getOrCreateTracker(sessionId: string, threadId: number): ActivityTracker {
+    let tracker = this.sessionTrackers.get(sessionId)
+    if (!tracker) {
+      tracker = new ActivityTracker(
+        this.bot.api,
+        this.telegramConfig.chatId,
+        threadId,
+        this.sendQueue,
+      )
+      this.sessionTrackers.set(sessionId, tracker)
+    }
+    return tracker
+  }
 
   constructor(core: OpenACPCore, config: TelegramChannelConfig) {
     super(core, config as never);
@@ -325,6 +339,10 @@ export class TelegramAdapter extends ChannelAdapter {
       // Session topic → send typing indicator and forward to core
       const sessionId = (this.core as OpenACPCore).sessionManager.getSessionByThread("telegram", String(threadId))?.id;
       if (sessionId) await this.finalizeDraft(sessionId);
+      if (sessionId) {
+        const tracker = this.sessionTrackers.get(sessionId)
+        if (tracker) await tracker.onNewPrompt()
+      }
       ctx.replyWithChatAction("typing").catch(() => {});
       (this.core as OpenACPCore)
         .handleMessage({
@@ -352,14 +370,16 @@ export class TelegramAdapter extends ChannelAdapter {
 
     switch (content.type) {
       case "thought": {
-        // Skip thought/thinking content — it's internal agent reasoning
-        // Users don't need to see it
+        const tracker = this.getOrCreateTracker(sessionId, threadId)
+        await tracker.onThought()
         break;
       }
 
       case "text": {
         let draft = this.sessionDrafts.get(sessionId);
         if (!draft) {
+          const tracker = this.getOrCreateTracker(sessionId, threadId)
+          await tracker.onTextStart()
           draft = new MessageDraft(
             this.bot,
             this.telegramConfig.chatId,
@@ -378,6 +398,8 @@ export class TelegramAdapter extends ChannelAdapter {
       }
 
       case "tool_call": {
+        const tracker = this.getOrCreateTracker(sessionId, threadId)
+        await tracker.onToolCall()
         await this.finalizeDraft(sessionId);
         const meta = content.metadata as never as {
           id: string;
@@ -476,45 +498,27 @@ export class TelegramAdapter extends ChannelAdapter {
       }
 
       case "plan": {
-        await this.finalizeDraft(sessionId);
-        await this.sendQueue.enqueue(() =>
-          this.bot.api.sendMessage(
-            this.telegramConfig.chatId,
-            formatPlan(
-              content.metadata as never as {
-                entries: Array<{ content: string; status: string }>;
-              },
-            ),
-            {
-              message_thread_id: threadId,
-              parse_mode: "HTML",
-              disable_notification: true,
-            },
-          ),
-        );
+        const meta = content.metadata as never as {
+          entries: Array<{ content: string; status: string; priority: string }>
+        }
+        const tracker = this.getOrCreateTracker(sessionId, threadId)
+        await tracker.onPlan(
+          meta.entries.map(e => ({
+            content: e.content,
+            status: e.status as 'pending' | 'in_progress' | 'completed',
+            priority: (e.priority ?? 'medium') as 'high' | 'medium' | 'low',
+          })),
+        )
         break;
       }
 
       case "usage": {
-        await this.finalizeDraft(sessionId);
-        // Show usage stats
-        await this.sendQueue.enqueue(() =>
-          this.bot.api.sendMessage(
-            this.telegramConfig.chatId,
-            formatUsage(
-              content.metadata as never as {
-                tokensUsed?: number;
-                contextSize?: number;
-                cost?: { amount: number; currency: string };
-              },
-            ),
-            {
-              message_thread_id: threadId,
-              parse_mode: "HTML",
-              disable_notification: true,
-            },
-          ),
-        );
+        const meta = content.metadata as never as {
+          tokensUsed?: number;
+          contextSize?: number;
+        }
+        const tracker = this.getOrCreateTracker(sessionId, threadId)
+        await tracker.sendUsage(meta)
         break;
       }
 
@@ -523,22 +527,34 @@ export class TelegramAdapter extends ChannelAdapter {
         this.sessionDrafts.delete(sessionId);
         this.toolCallMessages.delete(sessionId);
         await this.cleanupSkillCommands(sessionId);
-        await this.sendQueue.enqueue(() =>
-          this.bot.api.sendMessage(
-            this.telegramConfig.chatId,
-            `✅ <b>Done</b>`,
-            {
-              message_thread_id: threadId,
-              parse_mode: "HTML",
-              disable_notification: true,
-            },
-          ),
-        );
+        const tracker = this.sessionTrackers.get(sessionId)
+        if (tracker) {
+          await tracker.onComplete()
+          tracker.destroy()
+          this.sessionTrackers.delete(sessionId)
+        } else {
+          await this.sendQueue.enqueue(() =>
+            this.bot.api.sendMessage(
+              this.telegramConfig.chatId,
+              `✅ <b>Done</b>`,
+              {
+                message_thread_id: threadId,
+                parse_mode: "HTML",
+                disable_notification: true,
+              },
+            ),
+          )
+        }
         break;
       }
 
       case "error": {
         await this.finalizeDraft(sessionId);
+        const tracker = this.sessionTrackers.get(sessionId)
+        if (tracker) {
+          tracker.destroy()
+          this.sessionTrackers.delete(sessionId)
+        }
         await this.sendQueue.enqueue(() =>
           this.bot.api.sendMessage(
             this.telegramConfig.chatId,
