@@ -21,6 +21,7 @@ export class MessageDraft {
   ) {}
 
   append(text: string): void {
+    if (!text) return
     this.buffer += text
     this.scheduleFlush()
   }
@@ -73,8 +74,9 @@ export class MessageDraft {
         )
         this.lastSentBuffer = this.buffer
       } catch {
-        // editMessageText failed (message deleted?) — reset messageId
-        this.messageId = undefined
+        // Don't reset messageId — transient errors (rate limit, network) would cause
+        // the next flush to sendMessage the full buffer as a NEW message, creating duplicates.
+        // If the message was truly deleted, finalize() handles the fallback.
       }
     }
   }

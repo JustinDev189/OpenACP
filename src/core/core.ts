@@ -111,9 +111,9 @@ export class OpenACPCore {
       );
       const adapter = this.adapters.get(message.channelId);
       if (adapter) {
-        await adapter.sendMessage("system", {
+        await adapter.sendMessage(message.threadId, {
           type: "error",
-          text: `Max concurrent sessions (${config.security.maxConcurrentSessions}) reached. Cancel a session first.`,
+          text: `⚠️ Session limit reached (${config.security.maxConcurrentSessions}). Please cancel existing sessions with /cancel before starting new ones.`,
         });
       }
       return;
@@ -175,12 +175,23 @@ export class OpenACPCore {
       channelId,
       currentThreadId,
     );
-    if (!currentSession) return null;
+
+    if (currentSession) {
+      return this.handleNewSession(
+        channelId,
+        currentSession.agentName,
+        currentSession.workingDirectory,
+      );
+    }
+
+    // Fallback: look up from store (e.g. after restart before lazy resume)
+    const record = this.sessionManager.getRecordByThread(channelId, currentThreadId);
+    if (!record || record.status === "cancelled" || record.status === "error") return null;
 
     return this.handleNewSession(
       channelId,
-      currentSession.agentName,
-      currentSession.workingDirectory,
+      record.agentName,
+      record.workingDir,
     );
   }
 

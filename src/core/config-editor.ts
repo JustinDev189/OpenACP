@@ -171,7 +171,7 @@ async function editWorkspace(config: Config, updates: ConfigUpdates): Promise<vo
 // --- Edit: Security ---
 
 async function editSecurity(config: Config, updates: ConfigUpdates): Promise<void> {
-  const sec = config.security ?? { allowedUserIds: [], maxConcurrentSessions: 5, sessionTimeoutMinutes: 60 }
+  const sec = config.security ?? { allowedUserIds: [], maxConcurrentSessions: 20, sessionTimeoutMinutes: 60 }
 
   console.log(header('Security'))
   console.log(`  Allowed user IDs        : ${sec.allowedUserIds?.length ? sec.allowedUserIds.join(', ') : dim('(all users allowed)')}`)

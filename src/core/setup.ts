@@ -519,7 +519,7 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
     const { runMode, autoStart } = await setupRunMode();
     const security = {
       allowedUserIds: [] as string[],
-      maxConcurrentSessions: 5,
+      maxConcurrentSessions: 20,
       sessionTimeoutMinutes: 60,
     };
 

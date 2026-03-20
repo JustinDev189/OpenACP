@@ -21,6 +21,7 @@ import {
   setupCommands,
   setupMenuCallbacks,
   setupSkillCallbacks,
+  setupDangerousModeCallbacks,
   buildMenuKeyboard,
   buildSkillKeyboard,
   clearSkillCallbacks,
@@ -215,6 +216,7 @@ export class TelegramAdapter extends ChannelAdapter {
     // Callback registration order matters!
     // Specific regex handlers first, catch-all last.
     setupSkillCallbacks(this.bot, this.core as OpenACPCore);
+    setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
     setupActionCallbacks(
       this.bot,
       this.core as OpenACPCore,
@@ -527,6 +529,23 @@ export class TelegramAdapter extends ChannelAdapter {
         await this.finalizeDraft(sessionId)
         const tracker = this.getOrCreateTracker(sessionId, threadId)
         await tracker.sendUsage(meta)
+
+        // Notify the Notifications topic that a prompt has completed
+        if (this.notificationTopicId && sessionId !== this.assistantSession?.id) {
+          const sess = (this.core as OpenACPCore).sessionManager.getSession(sessionId)
+          const sessionName = sess?.name || 'Session'
+          const chatIdStr = String(this.telegramConfig.chatId)
+          const numericId = chatIdStr.startsWith('-100') ? chatIdStr.slice(4) : chatIdStr.replace('-', '')
+          const deepLink = `https://t.me/c/${numericId}/${threadId}`
+          const text = `✅ <b>${escapeHtml(sessionName)}</b>\nTask completed.\n\n<a href="${deepLink}">→ Go to topic</a>`
+          this.sendQueue.enqueue(() =>
+            this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
+              message_thread_id: this.notificationTopicId,
+              parse_mode: 'HTML',
+              disable_notification: false,
+            }),
+          ).catch(() => {})
+        }
         break;
       }
 
@@ -588,12 +607,27 @@ export class TelegramAdapter extends ChannelAdapter {
       sessionId,
     );
     if (!session) return;
+
+    // Dangerous mode: auto-approve without prompting the user
+    if (session.dangerousMode) {
+      const allowOption = request.options.find((o) => o.isAllow);
+      if (allowOption && session.pendingPermission?.requestId === request.id) {
+        log.info({ sessionId, requestId: request.id, optionId: allowOption.id }, "Dangerous mode: auto-approving permission");
+        session.pendingPermission.resolve(allowOption.id);
+        session.pendingPermission = undefined;
+      }
+      return;
+    }
+
     await this.sendQueue.enqueue(() =>
       this.permissionHandler.sendPermissionRequest(session, request),
     );
   }
 
   async sendNotification(notification: NotificationMessage): Promise<void> {
+    // Skip notifications for the assistant session (system session, not user-visible)
+    if (notification.sessionId === this.assistantSession?.id) return;
+
     log.info(
       { sessionId: notification.sessionId, type: notification.type },
       "Notification sent",
@@ -607,8 +641,20 @@ export class TelegramAdapter extends ChannelAdapter {
     };
     let text = `${emoji[notification.type] || "ℹ️"} <b>${escapeHtml(notification.sessionName || "New session")}</b>\n`;
     text += escapeHtml(notification.summary);
-    if (notification.deepLink) {
-      text += `\n\n<a href="${notification.deepLink}">→ Go to message</a>`;
+
+    // Build deep link to session topic (Telegram supergroup format: /c/{chatId}/{threadId})
+    const deepLink = notification.deepLink ?? (() => {
+      const session = (this.core as OpenACPCore).sessionManager.getSession(notification.sessionId);
+      const threadId = session?.threadId;
+      if (!threadId) return undefined;
+      // chatId for supergroups looks like -1001234567890; strip -100 prefix
+      const chatIdStr = String(this.telegramConfig.chatId);
+      const numericId = chatIdStr.startsWith("-100") ? chatIdStr.slice(4) : chatIdStr.replace("-", "");
+      return `https://t.me/c/${numericId}/${threadId}`;
+    })();
+
+    if (deepLink) {
+      text += `\n\n<a href="${deepLink}">→ Go to topic</a>`;
     }
     await this.sendQueue.enqueue(() =>
       this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
@@ -647,6 +693,9 @@ export class TelegramAdapter extends ChannelAdapter {
     sessionId: string,
     commands: AgentCommand[],
   ): Promise<void> {
+    // Suppress skill commands for the assistant session entirely
+    if (sessionId === this.assistantSession?.id) return;
+
     const session = (this.core as OpenACPCore).sessionManager.getSession(
       sessionId,
     );
@@ -796,8 +845,11 @@ export class TelegramAdapter extends ChannelAdapter {
     const draft = this.sessionDrafts.get(sessionId);
     if (!draft) return;
 
-    const finalMsgId = await draft.finalize();
+    // Delete BEFORE awaiting to prevent concurrent finalizeDraft() calls
+    // from double-finalizing the same draft (events are not awaited in
+    // wireSessionEvents, so tool_call/usage/session_end can race).
     this.sessionDrafts.delete(sessionId);
+    const finalMsgId = await draft.finalize();
 
     // Detect actions in assistant responses and attach keyboard via editMessageReplyMarkup
     if (sessionId === this.assistantSession?.id) {

@@ -24,6 +24,7 @@ export async function spawnAssistant(
     core.agentManager,
   );
   session.threadId = String(assistantTopicId);
+  session.name = "Assistant"; // Prevent auto-naming from triggering after system prompt
   log.info({ sessionId: session.id }, "Assistant agent spawned");
 
   // Wire events first so the adapter is ready to receive real user responses.

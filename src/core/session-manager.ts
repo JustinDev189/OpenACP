@@ -58,6 +58,13 @@ export class SessionManager {
     return undefined;
   }
 
+  getRecordByThread(channelId: string, threadId: string): import("./types.js").SessionRecord | undefined {
+    return this.store?.findByPlatform(
+      channelId,
+      (p) => String(p.topicId) === threadId,
+    );
+  }
+
   registerSession(session: Session): void {
     this.sessions.set(session.id, session);
   }
@@ -111,11 +118,11 @@ export class SessionManager {
     const session = this.sessions.get(sessionId);
     if (session) {
       await session.cancel();
-      if (this.store) {
-        const record = this.store.get(sessionId);
-        if (record) {
-          await this.store.save({ ...record, status: "cancelled" });
-        }
+    }
+    if (this.store) {
+      const record = this.store.get(sessionId);
+      if (record && record.status !== "cancelled") {
+        await this.store.save({ ...record, status: "cancelled" });
       }
     }
   }

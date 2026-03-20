@@ -27,6 +27,8 @@ export function setupCommands(
   bot.command("agents", (ctx) => handleAgents(ctx, core));
   bot.command("help", (ctx) => handleHelp(ctx));
   bot.command("menu", (ctx) => handleMenu(ctx));
+  bot.command("enable_dangerous", (ctx) => handleEnableDangerous(ctx, core));
+  bot.command("disable_dangerous", (ctx) => handleDisableDangerous(ctx, core));
 }
 
 export function buildMenuKeyboard(): InlineKeyboard {
@@ -155,6 +157,7 @@ async function handleNew(
       {
         message_thread_id: threadId,
         parse_mode: "HTML",
+        reply_markup: buildDangerousModeKeyboard(session.id, false),
       },
     );
 
@@ -225,6 +228,7 @@ async function handleNewChat(
       {
         message_thread_id: newThreadId,
         parse_mode: "HTML",
+        reply_markup: buildDangerousModeKeyboard(session.id, false),
       },
     );
 
@@ -263,6 +267,15 @@ async function handleCancel(
     log.info({ sessionId: session.id }, "Cancel session command");
     await session.cancel();
     await ctx.reply("⛔ Session cancelled.", { parse_mode: "HTML" });
+    return;
+  }
+
+  // Fallback: cancel from store when session not in memory (e.g. after restart)
+  const record = core.sessionManager.getRecordByThread("telegram", String(threadId));
+  if (record && record.status !== "cancelled" && record.status !== "error") {
+    log.info({ sessionId: record.sessionId }, "Cancel session command (from store)");
+    await core.sessionManager.cancelSession(record.sessionId);
+    await ctx.reply("⛔ Session cancelled.", { parse_mode: "HTML" });
   }
 }
 
@@ -283,9 +296,21 @@ async function handleStatus(ctx: Context, core: OpenACPCore): Promise<void> {
         { parse_mode: "HTML" },
       );
     } else {
-      await ctx.reply("No active session in this topic.", {
-        parse_mode: "HTML",
-      });
+      // Fallback: show stored session info when not loaded in memory (e.g. after restart)
+      const record = core.sessionManager.getRecordByThread("telegram", String(threadId));
+      if (record) {
+        await ctx.reply(
+          `<b>Session:</b> ${escapeHtml(record.name || record.sessionId)}\n` +
+            `<b>Agent:</b> ${escapeHtml(record.agentName)}\n` +
+            `<b>Status:</b> ${escapeHtml(record.status)} (not loaded)\n` +
+            `<b>Workspace:</b> <code>${escapeHtml(record.workingDir)}</code>`,
+          { parse_mode: "HTML" },
+        );
+      } else {
+        await ctx.reply("No active session in this topic.", {
+          parse_mode: "HTML",
+        });
+      }
     }
   } else {
     const sessions = core.sessionManager.listSessions("telegram");
@@ -329,6 +354,79 @@ async function handleHelp(ctx: Context): Promise<void> {
       `Or just chat in the 🤖 Assistant topic for help!`,
     { parse_mode: "HTML" },
   );
+}
+
+export function buildDangerousModeKeyboard(sessionId: string, enabled: boolean): InlineKeyboard {
+  return new InlineKeyboard().text(
+    enabled ? "🔐 Disable Dangerous Mode" : "☠️ Enable Dangerous Mode",
+    `d:${sessionId}`,
+  );
+}
+
+export function setupDangerousModeCallbacks(bot: Bot, core: OpenACPCore): void {
+  bot.callbackQuery(/^d:/, async (ctx) => {
+    const sessionId = ctx.callbackQuery.data.slice(2);
+    const session = core.sessionManager.getSession(sessionId);
+    if (!session) {
+      try { await ctx.answerCallbackQuery({ text: "⚠️ Session not found or already ended." }); } catch { /* expired */ }
+      return;
+    }
+
+    session.dangerousMode = !session.dangerousMode;
+    log.info({ sessionId, dangerousMode: session.dangerousMode }, "Dangerous mode toggled via button");
+
+    const toastText = session.dangerousMode
+      ? "☠️ Dangerous mode enabled — permissions auto-approved"
+      : "🔐 Dangerous mode disabled — permissions shown normally";
+    try { await ctx.answerCallbackQuery({ text: toastText }); } catch { /* expired */ }
+
+    try {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: buildDangerousModeKeyboard(sessionId, session.dangerousMode),
+      });
+    } catch { /* ignore */ }
+  });
+}
+
+async function handleEnableDangerous(ctx: Context, core: OpenACPCore): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  if (!threadId) {
+    await ctx.reply("⚠️ This command only works inside a session topic.", { parse_mode: "HTML" });
+    return;
+  }
+  const session = core.sessionManager.getSessionByThread("telegram", String(threadId));
+  if (!session) {
+    await ctx.reply("⚠️ No active session in this topic.", { parse_mode: "HTML" });
+    return;
+  }
+  if (session.dangerousMode) {
+    await ctx.reply("☠️ Dangerous mode is already enabled.", { parse_mode: "HTML" });
+    return;
+  }
+  session.dangerousMode = true;
+  await ctx.reply(
+    `⚠️ <b>Dangerous mode enabled</b>\n\nAll permission requests will be auto-approved. Claude can run arbitrary commands without asking.\n\nUse /disable_dangerous to restore normal behaviour.`,
+    { parse_mode: "HTML" },
+  );
+}
+
+async function handleDisableDangerous(ctx: Context, core: OpenACPCore): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  if (!threadId) {
+    await ctx.reply("⚠️ This command only works inside a session topic.", { parse_mode: "HTML" });
+    return;
+  }
+  const session = core.sessionManager.getSessionByThread("telegram", String(threadId));
+  if (!session) {
+    await ctx.reply("⚠️ No active session in this topic.", { parse_mode: "HTML" });
+    return;
+  }
+  if (!session.dangerousMode) {
+    await ctx.reply("🔐 Dangerous mode is already disabled.", { parse_mode: "HTML" });
+    return;
+  }
+  session.dangerousMode = false;
+  await ctx.reply("🔐 <b>Dangerous mode disabled</b>\n\nPermission requests will be shown normally.", { parse_mode: "HTML" });
 }
 
 // grammy's Context exposes .api (the bot's Api instance) and internally the bot
@@ -463,4 +561,6 @@ export const STATIC_COMMANDS = [
   { command: "agents", description: "List available agents" },
   { command: "help", description: "Help" },
   { command: "menu", description: "Show menu" },
+  { command: "enable_dangerous", description: "Auto-approve all permission requests (session only)" },
+  { command: "disable_dangerous", description: "Restore normal permission prompts (session only)" },
 ];

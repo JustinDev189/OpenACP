@@ -67,7 +67,7 @@ export const ConfigSchema = z.object({
   security: z
     .object({
       allowedUserIds: z.array(z.string()).default([]),
-      maxConcurrentSessions: z.number().default(5),
+      maxConcurrentSessions: z.number().default(20),
       sessionTimeoutMinutes: z.number().default(60),
     })
     .default({}),
@@ -113,7 +113,7 @@ const DEFAULT_CONFIG = {
   workspace: { baseDir: "~/openacp-workspace" },
   security: {
     allowedUserIds: [],
-    maxConcurrentSessions: 5,
+    maxConcurrentSessions: 20,
     sessionTimeoutMinutes: 60,
   },
   sessionStore: { ttlDays: 30 },

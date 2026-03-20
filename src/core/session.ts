@@ -23,6 +23,7 @@ export class Session {
     requestId: string;
     resolve: (optionId: string) => void;
   };
+  dangerousMode: boolean = false;
   log: Logger;
 
   constructor(opts: {
@@ -112,7 +113,11 @@ export class Session {
   async warmup(): Promise<void> {
     this.promptRunning = true;
     const prevHandler = this.agentInstance.onSessionUpdate;
-    this.agentInstance.onSessionUpdate = () => {}; // suppress warm-up output
+    // Suppress display events during warmup, but let commands_update pass through
+    // so skill commands are shown after the warmup completes.
+    this.agentInstance.onSessionUpdate = (event) => {
+      if (event.type === "commands_update") prevHandler(event);
+    };
 
     try {
       const start = Date.now();

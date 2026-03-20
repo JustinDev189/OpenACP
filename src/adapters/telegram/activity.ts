@@ -8,7 +8,8 @@ const log = createChildLogger({ module: 'telegram:activity' })
 
 // ─── ThinkingIndicator ────────────────────────────────────────────────────────
 
-const THINKING_REFRESH_MS = 10_000
+const THINKING_REFRESH_MS = 15_000
+const THINKING_MAX_MS = 3 * 60 * 1000
 
 export class ThinkingIndicator {
   private msgId?: number
@@ -62,18 +63,20 @@ export class ThinkingIndicator {
   private startRefreshTimer(): void {
     this.stopRefreshTimer()
     this.refreshTimer = setInterval(() => {
-      if (this.dismissed || !this.msgId) {
+      if (this.dismissed || !this.msgId || (Date.now() - this.showTime) >= THINKING_MAX_MS) {
         this.stopRefreshTimer()
         return
       }
       const elapsed = Math.round((Date.now() - this.showTime) / 1000)
-      this.sendQueue.enqueue(() =>
-        this.api.sendMessage(this.chatId, `💭 <i>Still thinking... (${elapsed}s)</i>`, {
+      this.sendQueue.enqueue(() => {
+        // Re-check after waiting in queue — dismiss may have been called
+        if (this.dismissed) return Promise.resolve(undefined)
+        return this.api.sendMessage(this.chatId, `💭 <i>Still thinking... (${elapsed}s)</i>`, {
           message_thread_id: this.threadId,
           parse_mode: 'HTML',
           disable_notification: true,
-        }),
-      ).then(result => {
+        })
+      }).then(result => {
         if (result && !this.dismissed) {
           this.msgId = result.message_id
         }
