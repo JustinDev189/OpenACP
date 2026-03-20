@@ -94,18 +94,97 @@ export class UsageMessage {
   }
 }
 
-// ─── PlanCard placeholder (implemented in Task 3) ────────────────────────────
+// ─── PlanCard ─────────────────────────────────────────────────────────────────
+
+function formatPlanCard(entries: PlanEntry[]): string {
+  const statusIcon: Record<string, string> = {
+    completed: '✅',
+    in_progress: '🔄',
+    pending: '⬜',
+    failed: '❌',
+  }
+  const total = entries.length
+  const done = entries.filter(e => e.status === 'completed').length
+  const ratio = total > 0 ? done / total : 0
+  const filled = Math.round(ratio * 10)
+  const bar = '▓'.repeat(filled) + '░'.repeat(10 - filled)
+  const pct = Math.round(ratio * 100)
+  const header = `📋 <b>Plan</b>\n${bar} ${pct}% · ${done}/${total}`
+  const lines = entries.map((e, i) => {
+    const icon = statusIcon[e.status] ?? '⬜'
+    return `${icon} ${i + 1}. ${e.content}`
+  })
+  return [header, ...lines].join('\n')
+}
 
 export class PlanCard {
+  private msgId?: number
+  private flushPromise: Promise<void> = Promise.resolve()
+  private latestEntries?: PlanEntry[]
+  private flushTimer?: ReturnType<typeof setTimeout>
+
   constructor(
-    _api: Bot['api'],
-    _chatId: number,
-    _threadId: number,
-    _sendQueue: TelegramSendQueue,
+    private api: Bot['api'],
+    private chatId: number,
+    private threadId: number,
+    private sendQueue: TelegramSendQueue,
   ) {}
-  update(_entries: PlanEntry[]): void {}
-  async finalize(): Promise<void> {}
-  destroy(): void {}
+
+  update(entries: PlanEntry[]): void {
+    this.latestEntries = entries
+    if (this.flushTimer) clearTimeout(this.flushTimer)
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined
+      this.flushPromise = this.flushPromise
+        .then(() => this._flush())
+        .catch(() => {})
+    }, 3500)
+  }
+
+  async finalize(): Promise<void> {
+    if (!this.latestEntries) return
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = undefined
+    }
+    await this.flushPromise
+    this.flushPromise = this.flushPromise
+      .then(() => this._flush())
+      .catch(() => {})
+    await this.flushPromise
+  }
+
+  destroy(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = undefined
+    }
+  }
+
+  private async _flush(): Promise<void> {
+    if (!this.latestEntries) return
+    const text = formatPlanCard(this.latestEntries)
+    try {
+      if (this.msgId) {
+        await this.sendQueue.enqueue(() =>
+          this.api.editMessageText(this.chatId, this.msgId!, text, {
+            parse_mode: 'HTML',
+          }),
+        )
+      } else {
+        const result = await this.sendQueue.enqueue(() =>
+          this.api.sendMessage(this.chatId, text, {
+            message_thread_id: this.threadId,
+            parse_mode: 'HTML',
+            disable_notification: true,
+          }),
+        )
+        if (result) this.msgId = result.message_id
+      }
+    } catch (err) {
+      log.warn({ err }, 'PlanCard flush failed')
+    }
+  }
 }
 
 // ─── ActivityTracker placeholder (implemented in Task 4) ─────────────────────
