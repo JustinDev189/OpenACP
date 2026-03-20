@@ -490,7 +490,7 @@ export class TelegramAdapter extends ChannelAdapter {
     }
 
     // Update Telegram autocomplete with skill commands
-    await this.updateCommandAutocomplete(commands);
+    await this.updateCommandAutocomplete(session.agentName, commands);
   }
 
   async cleanupSkillCommands(sessionId: string): Promise<void> {
@@ -512,16 +512,15 @@ export class TelegramAdapter extends ChannelAdapter {
     this.skillMessages.delete(sessionId);
     clearSkillCallbacks(sessionId);
 
-    // Reset autocomplete to static commands only
-    await this.updateCommandAutocomplete([]);
   }
 
-  private async updateCommandAutocomplete(skillCommands: AgentCommand[]): Promise<void> {
+  private async updateCommandAutocomplete(agentName: string, skillCommands: AgentCommand[]): Promise<void> {
     // Telegram requires: 1-32 chars, lowercase a-z, 0-9, underscores only
+    const prefix = `[${agentName}] `;
     const validSkills = skillCommands
       .map((c) => ({
         command: c.name.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 32),
-        description: (c.description || c.name).replace(/\n/g, " ").slice(0, 256),
+        description: (prefix + ((c.description || c.name).replace(/\n/g, " "))).slice(0, 256),
       }))
       .filter((c) => c.command.length > 0);
     const all = [...STATIC_COMMANDS, ...validSkills];
