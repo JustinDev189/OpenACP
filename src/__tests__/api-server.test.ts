@@ -83,7 +83,7 @@ describe('ApiServer', () => {
   })
 
   it('POST /api/sessions creates a session', async () => {
-    const mockSession = { id: 'abc123', agentName: 'claude', status: 'initializing' }
+    const mockSession = { id: 'abc123', agentName: 'claude', status: 'initializing', workingDirectory: '/tmp/ws', warmup: vi.fn().mockResolvedValue(undefined) }
     mockCore.handleNewSession.mockResolvedValueOnce(mockSession)
     const port = await startServer()
 
@@ -98,11 +98,13 @@ describe('ApiServer', () => {
     expect(data.sessionId).toBe('abc123')
     expect(data.agent).toBe('claude')
     expect(data.status).toBe('initializing')
+    expect(data.workspace).toBe('/tmp/ws')
     expect(mockCore.handleNewSession).toHaveBeenCalledWith('api', 'claude', undefined)
+    expect(mockSession.warmup).toHaveBeenCalled()
   })
 
   it('POST /api/sessions with empty body uses defaults', async () => {
-    const mockSession = { id: 'def456', agentName: 'claude', status: 'initializing' }
+    const mockSession = { id: 'def456', agentName: 'claude', status: 'initializing', workingDirectory: '/tmp/ws', warmup: vi.fn().mockResolvedValue(undefined) }
     mockCore.handleNewSession.mockResolvedValueOnce(mockSession)
     const port = await startServer()
 
@@ -148,8 +150,8 @@ describe('ApiServer', () => {
 
   it('GET /api/sessions returns session list', async () => {
     mockCore.sessionManager.listSessions.mockReturnValueOnce([
-      { id: 'abc', agentName: 'claude', status: 'active', name: 'Fix bug' },
-      { id: 'def', agentName: 'codex', status: 'initializing', name: undefined },
+      { id: 'abc', agentName: 'claude', status: 'active', name: 'Fix bug', workingDirectory: '/tmp/a' },
+      { id: 'def', agentName: 'codex', status: 'initializing', name: undefined, workingDirectory: '/tmp/b' },
     ])
     const port = await startServer()
 
@@ -157,8 +159,8 @@ describe('ApiServer', () => {
     expect(res.status).toBe(200)
     const data = await res.json()
     expect(data.sessions).toHaveLength(2)
-    expect(data.sessions[0]).toEqual({ id: 'abc', agent: 'claude', status: 'active', name: 'Fix bug' })
-    expect(data.sessions[1]).toEqual({ id: 'def', agent: 'codex', status: 'initializing', name: null })
+    expect(data.sessions[0]).toEqual({ id: 'abc', agent: 'claude', status: 'active', name: 'Fix bug', workspace: '/tmp/a' })
+    expect(data.sessions[1]).toEqual({ id: 'def', agent: 'codex', status: 'initializing', name: null, workspace: '/tmp/b' })
   })
 
   it('GET /api/agents returns agent list with default', async () => {

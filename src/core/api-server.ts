@@ -129,10 +129,15 @@ export class ApiServer {
     }
 
     const session = await this.core.handleNewSession('api', agent, workspace)
+
+    // Warmup in background so session moves from 'initializing' to 'active'
+    session.warmup().catch(err => log.warn({ err, sessionId: session.id }, 'API session warmup failed'))
+
     this.sendJson(res, 200, {
       sessionId: session.id,
       agent: session.agentName,
       status: session.status,
+      workspace: session.workingDirectory,
     })
   }
 
@@ -154,6 +159,7 @@ export class ApiServer {
         agent: s.agentName,
         status: s.status,
         name: s.name ?? null,
+        workspace: s.workingDirectory,
       })),
     })
   }

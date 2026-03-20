@@ -17,6 +17,7 @@ Usage:
   openacp status                       Show daemon status
   openacp logs                         Tail daemon log file
   openacp config                       Edit configuration
+  openacp reset                        Delete all data and start fresh
   openacp install <package>            Install a plugin adapter
   openacp uninstall <package>          Uninstall a plugin adapter
   openacp plugins                      List installed plugins
@@ -121,9 +122,10 @@ async function main() {
           process.exit(1)
         }
         console.log('Session created')
-        console.log(`  ID     : ${data.sessionId}`)
-        console.log(`  Agent  : ${data.agent}`)
-        console.log(`  Status : ${data.status}`)
+        console.log(`  ID        : ${data.sessionId}`)
+        console.log(`  Agent     : ${data.agent}`)
+        console.log(`  Workspace : ${data.workspace}`)
+        console.log(`  Status    : ${data.status}`)
 
       } else if (subCmd === 'cancel') {
         const sessionId = args[2]
@@ -257,6 +259,37 @@ async function main() {
     return
   }
 
+  if (command === 'reset') {
+    const { getStatus } = await import('./core/daemon.js')
+    const status = getStatus()
+    if (status.running) {
+      console.error('OpenACP is running. Stop it first: openacp stop')
+      process.exit(1)
+    }
+
+    const { confirm } = await import('@inquirer/prompts')
+    const yes = await confirm({
+      message: 'This will delete all OpenACP data (~/.openacp). You will need to set up again. Continue?',
+      default: false,
+    })
+    if (!yes) {
+      console.log('Aborted.')
+      return
+    }
+
+    const { uninstallAutoStart } = await import('./core/autostart.js')
+    uninstallAutoStart()
+
+    const fs = await import('node:fs')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const openacpDir = path.join(os.homedir(), '.openacp')
+    fs.rmSync(openacpDir, { recursive: true, force: true })
+
+    console.log('Reset complete. Run `openacp` to set up again.')
+    return
+  }
+
   // Handle --daemon-child (internal flag for background server)
   if (command === '--daemon-child') {
     const { startServer } = await import('./main.js')
@@ -301,9 +334,9 @@ async function main() {
     return
   }
 
-  // Foreground mode — clear stopped marker since user is explicitly starting
-  const { clearUserStopped } = await import('./core/daemon.js')
-  clearUserStopped()
+  // Foreground mode — mark as running so auto-start works on next boot
+  const { markRunning } = await import('./core/daemon.js')
+  markRunning()
   const { startServer } = await import('./main.js')
   await startServer()
 }
