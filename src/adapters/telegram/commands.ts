@@ -23,6 +23,7 @@ export function setupCommands(
   bot.command("newchat", (ctx) => handleNewChat(ctx, core, chatId));
   bot.command("cancel", (ctx) => handleCancel(ctx, core, assistant));
   bot.command("status", (ctx) => handleStatus(ctx, core));
+  bot.command("sessions", (ctx) => handleTopics(ctx, core));
   bot.command("agents", (ctx) => handleAgents(ctx, core));
   bot.command("help", (ctx) => handleHelp(ctx));
   bot.command("menu", (ctx) => handleMenu(ctx));
@@ -30,6 +31,7 @@ export function setupCommands(
   bot.command("disable_dangerous", (ctx) => handleDisableDangerous(ctx, core));
   bot.command("restart", (ctx) => handleRestart(ctx, core));
   bot.command("update", (ctx) => handleUpdate(ctx, core));
+  bot.command("integrate", (ctx) => handleIntegrate(ctx, core));
 }
 
 export function buildMenuKeyboard(): InlineKeyboard {
@@ -40,7 +42,10 @@ export function buildMenuKeyboard(): InlineKeyboard {
     .text("⛔ Cancel", "m:cancel")
     .text("📊 Status", "m:status")
     .row()
+    .text("📋 Sessions", "m:topics")
     .text("🤖 Agents", "m:agents")
+    .row()
+    .text("🔗 Integrate", "m:integrate")
     .text("❓ Help", "m:help")
     .row()
     .text("🔄 Restart", "m:restart")
@@ -84,6 +89,21 @@ export function setupMenuCallbacks(
         break;
       case "m:update":
         await handleUpdate(ctx, core);
+        break;
+      case "m:integrate":
+        await handleIntegrate(ctx, core);
+        break;
+      case "m:topics":
+        await handleTopics(ctx, core);
+        break;
+      case "m:cleanup:finished":
+        await handleCleanup(ctx, core, chatId, ["finished"]);
+        break;
+      case "m:cleanup:errors":
+        await handleCleanup(ctx, core, chatId, ["error", "cancelled"]);
+        break;
+      case "m:cleanup:all":
+        await handleCleanup(ctx, core, chatId, ["finished", "error", "cancelled"]);
         break;
     }
   });
@@ -371,6 +391,119 @@ async function handleStatus(ctx: Context, core: OpenACPCore): Promise<void> {
       { parse_mode: "HTML" },
     );
   }
+}
+
+async function handleTopics(ctx: Context, core: OpenACPCore): Promise<void> {
+  try {
+    const allRecords = core.sessionManager.listRecords();
+
+    // Only show sessions that have a Telegram topic (skip headless/CLI-only)
+    const records = allRecords.filter((r) => {
+      const platform = r.platform as { topicId?: number };
+      return !!platform?.topicId;
+    });
+
+    const headlessCount = allRecords.length - records.length;
+
+    if (records.length === 0) {
+      const extra = headlessCount > 0 ? ` (${headlessCount} headless hidden)` : "";
+      await ctx.reply(`No sessions with topics found.${extra}`, { parse_mode: "HTML" });
+      return;
+    }
+
+    const statusEmoji: Record<string, string> = {
+      active: "🟢",
+      initializing: "🟡",
+      finished: "✅",
+      error: "❌",
+      cancelled: "⛔",
+    };
+
+    // Sort: active/initializing first, then by lastActiveAt desc
+    const statusOrder: Record<string, number> = { active: 0, initializing: 1, error: 2, finished: 3, cancelled: 4 };
+    records.sort((a, b) => (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5));
+
+    const MAX_DISPLAY = 30;
+    const displayed = records.slice(0, MAX_DISPLAY);
+
+    const lines = displayed.map((r) => {
+      const emoji = statusEmoji[r.status] || "⚪";
+      const name = r.name ? ` "${escapeHtml(r.name)}"` : "";
+      const platform = r.platform as { topicId?: number };
+      return `${emoji} <code>${r.sessionId.slice(0, 8)}</code>  ${escapeHtml(r.agentName)}  ${r.status}${name}  #${platform.topicId}`;
+    });
+
+    const header = `<b>Sessions: ${records.length}</b>` +
+      (headlessCount > 0 ? ` (${headlessCount} headless hidden)` : "");
+    const truncated = records.length > MAX_DISPLAY ? `\n\n<i>...and ${records.length - MAX_DISPLAY} more</i>` : "";
+
+    // Count by status for cleanup buttons
+    const finishedCount = records.filter((r) => r.status === "finished").length;
+    const errorCount = records.filter((r) => r.status === "error" || r.status === "cancelled").length;
+    const activeCount = records.filter((r) => r.status === "active" || r.status === "initializing").length;
+
+    const keyboard = new InlineKeyboard();
+    if (finishedCount > 0) {
+      keyboard.text(`🗑 Finished (${finishedCount})`, "m:cleanup:finished");
+    }
+    if (errorCount > 0) {
+      keyboard.text(`🗑 Errors (${errorCount})`, "m:cleanup:errors");
+    }
+    if (finishedCount + errorCount > 0) {
+      keyboard.row();
+    }
+    if (finishedCount + errorCount > 0) {
+      keyboard.text(`🗑 All non-active (${finishedCount + errorCount})`, "m:cleanup:all");
+    }
+    keyboard.text("🔄 Refresh", "m:topics");
+
+    await ctx.reply(
+      `${header}\n\n${lines.join("\n")}${truncated}`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+  } catch (err) {
+    log.error({ err }, "handleTopics error");
+    await ctx.reply("❌ Failed to list sessions.", { parse_mode: "HTML" }).catch(() => {});
+  }
+}
+
+async function handleCleanup(ctx: Context, core: OpenACPCore, chatId: number, statuses: string[]): Promise<void> {
+  const allRecords = core.sessionManager.listRecords();
+  const cleanable = allRecords.filter((r) => {
+    const platform = r.platform as { topicId?: number };
+    return !!platform?.topicId && statuses.includes(r.status);
+  });
+
+  if (cleanable.length === 0) {
+    await ctx.reply("Nothing to clean up.", { parse_mode: "HTML" });
+    return;
+  }
+
+  let deleted = 0;
+  let failed = 0;
+
+  for (const record of cleanable) {
+    try {
+      const topicId = (record.platform as { topicId?: number })?.topicId;
+      if (topicId) {
+        try {
+          await ctx.api.deleteForumTopic(chatId, topicId);
+        } catch (err) {
+          log.warn({ err, sessionId: record.sessionId, topicId }, "Failed to delete forum topic during cleanup");
+        }
+      }
+      await core.sessionManager.removeRecord(record.sessionId);
+      deleted++;
+    } catch (err) {
+      log.error({ err, sessionId: record.sessionId }, "Failed to cleanup session");
+      failed++;
+    }
+  }
+
+  await ctx.reply(
+    `🗑 Cleaned up <b>${deleted}</b> sessions${failed > 0 ? ` (${failed} failed)` : ""}.`,
+    { parse_mode: "HTML" },
+  );
 }
 
 async function handleAgents(ctx: Context, core: OpenACPCore): Promise<void> {
@@ -679,16 +812,148 @@ export async function executeCancelSession(
   return session;
 }
 
+async function handleIntegrate(ctx: Context, _core: OpenACPCore): Promise<void> {
+  const { listIntegrations } = await import("../../cli/integrate.js");
+  const agents = listIntegrations();
+
+  const keyboard = new InlineKeyboard();
+  for (const agent of agents) {
+    keyboard.text(`🤖 ${agent}`, `i:agent:${agent}`).row();
+  }
+
+  await ctx.reply(
+    `<b>🔗 Integrations</b>\n\nSelect an agent to manage its integrations.`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
+}
+
+function buildAgentItemsKeyboard(agentName: string, items: import("../../cli/integrate.js").IntegrationItem[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const item of items) {
+    const installed = item.isInstalled();
+    keyboard.text(
+      installed ? `✅ ${item.name} — Uninstall` : `📦 ${item.name} — Install`,
+      installed ? `i:uninstall:${agentName}:${item.id}` : `i:install:${agentName}:${item.id}`,
+    ).row();
+  }
+  keyboard.text("← Back", "i:back").row();
+  return keyboard;
+}
+
+export function setupIntegrateCallbacks(
+  bot: Bot,
+  core: OpenACPCore,
+): void {
+  bot.callbackQuery(/^i:/, async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    try {
+      await ctx.answerCallbackQuery();
+    } catch {
+      /* expired */
+    }
+
+    // Back to agent list
+    if (data === "i:back") {
+      const { listIntegrations } = await import("../../cli/integrate.js");
+      const agents = listIntegrations();
+      const keyboard = new InlineKeyboard();
+      for (const agent of agents) {
+        keyboard.text(`🤖 ${agent}`, `i:agent:${agent}`).row();
+      }
+      try {
+        await ctx.editMessageText(
+          `<b>🔗 Integrations</b>\n\nSelect an agent to manage its integrations.`,
+          { parse_mode: "HTML", reply_markup: keyboard },
+        );
+      } catch { /* message unchanged */ }
+      return;
+    }
+
+    // Show agent items
+    const agentMatch = data.match(/^i:agent:(.+)$/);
+    if (agentMatch) {
+      const agentName = agentMatch[1];
+      const { getIntegration } = await import("../../cli/integrate.js");
+      const integration = getIntegration(agentName);
+      if (!integration) {
+        await ctx.reply(`❌ No integration available for '${escapeHtml(agentName)}'.`, { parse_mode: "HTML" });
+        return;
+      }
+      const keyboard = buildAgentItemsKeyboard(agentName, integration.items);
+      try {
+        await ctx.editMessageText(
+          `<b>🔗 ${escapeHtml(agentName)} Integrations</b>\n\n${integration.items.map((i) => `• <b>${escapeHtml(i.name)}</b> — ${escapeHtml(i.description)}`).join("\n")}`,
+          { parse_mode: "HTML", reply_markup: keyboard },
+        );
+      } catch {
+        await ctx.reply(
+          `<b>🔗 ${escapeHtml(agentName)} Integrations</b>`,
+          { parse_mode: "HTML", reply_markup: keyboard },
+        );
+      }
+      return;
+    }
+
+    // Install / uninstall item
+    const actionMatch = data.match(/^i:(install|uninstall):([^:]+):(.+)$/);
+    if (!actionMatch) return;
+
+    const action = actionMatch[1] as "install" | "uninstall";
+    const agentName = actionMatch[2];
+    const itemId = actionMatch[3];
+
+    const { getIntegration } = await import("../../cli/integrate.js");
+    const integration = getIntegration(agentName);
+    if (!integration) return;
+
+    const item = integration.items.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const result = action === "install"
+      ? await item.install()
+      : await item.uninstall();
+
+    // Save state to config
+    const installed = action === "install" && result.success;
+    await core.configManager.save({
+      integrations: {
+        [agentName]: {
+          installed,
+          installedAt: installed ? new Date().toISOString() : undefined,
+        },
+      },
+    });
+
+    const statusEmoji = result.success ? "✅" : "❌";
+    const actionLabel = action === "install" ? "installed" : "uninstalled";
+    const logsText = result.logs.map((l) => `<code>${escapeHtml(l)}</code>`).join("\n");
+    const resultText = `${statusEmoji} <b>${escapeHtml(item.name)}</b> ${actionLabel}.\n\n${logsText}`;
+
+    const keyboard = buildAgentItemsKeyboard(agentName, integration.items);
+    try {
+      await ctx.editMessageText(
+        `<b>🔗 ${escapeHtml(agentName)} Integrations</b>\n\n${resultText}`,
+        { parse_mode: "HTML", reply_markup: keyboard },
+      );
+    } catch {
+      await ctx.reply(resultText, { parse_mode: "HTML" });
+    }
+  });
+}
+
 export const STATIC_COMMANDS = [
   { command: "new", description: "Create new session" },
   { command: "newchat", description: "New chat, same agent & workspace" },
   { command: "cancel", description: "Cancel current session" },
   { command: "status", description: "Show status" },
+  { command: "sessions", description: "List all sessions" },
   { command: "agents", description: "List available agents" },
   { command: "help", description: "Help" },
   { command: "menu", description: "Show menu" },
   { command: "enable_dangerous", description: "Auto-approve all permission requests (session only)" },
   { command: "disable_dangerous", description: "Restore normal permission prompts (session only)" },
+  { command: "integrate", description: "Manage agent integrations" },
+  { command: "handoff", description: "Continue this session in your terminal" },
   { command: "restart", description: "Restart OpenACP" },
   { command: "update", description: "Update to latest version and restart" },
 ];

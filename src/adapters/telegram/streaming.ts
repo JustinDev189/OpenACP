@@ -40,15 +40,25 @@ export class MessageDraft {
     if (!this.buffer) return
     if (this.firstFlushPending) return
 
-    const html = markdownToTelegramHtml(this.buffer)
-    const truncated = html.length > 4096 ? html.slice(0, 4090) + '\n...' : html
-    if (!truncated) return
+    // Truncate markdown BEFORE converting to HTML to avoid breaking HTML tags
+    let displayBuffer = this.buffer
+    if (displayBuffer.length > 3800) {
+      let cutAt = displayBuffer.lastIndexOf('\n', 3800)
+      if (cutAt < 800) cutAt = 3800
+      displayBuffer = displayBuffer.slice(0, cutAt) + '\n…'
+    }
+    let html = markdownToTelegramHtml(displayBuffer)
+    if (!html) return
+    // Safety fallback: if HTML is still too long after markdown truncation
+    if (html.length > 4096) {
+      html = html.slice(0, 4090) + '\n…'
+    }
 
     if (!this.messageId) {
       this.firstFlushPending = true
       try {
         const result = await this.sendQueue.enqueue(
-          () => this.bot.api.sendMessage(this.chatId, truncated, {
+          () => this.bot.api.sendMessage(this.chatId, html, {
             message_thread_id: this.threadId,
             parse_mode: 'HTML',
             disable_notification: true,
@@ -67,7 +77,7 @@ export class MessageDraft {
     } else {
       try {
         await this.sendQueue.enqueue(
-          () => this.bot.api.editMessageText(this.chatId, this.messageId!, truncated, {
+          () => this.bot.api.editMessageText(this.chatId, this.messageId!, html, {
             parse_mode: 'HTML',
           }),
           { type: 'text', key: this.sessionId },
@@ -96,22 +106,23 @@ export class MessageDraft {
       return this.messageId
     }
 
-    const html = markdownToTelegramHtml(this.buffer)
-    const chunks = splitMessage(html)
+    // Split markdown FIRST, then convert each chunk to HTML separately.
+    // This prevents breaking HTML tags (e.g. <pre><code>) at split boundaries.
+    const mdChunks = splitMessage(this.buffer)
 
-    try {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]
+    for (let i = 0; i < mdChunks.length; i++) {
+      const html = markdownToTelegramHtml(mdChunks[i])
+      try {
         if (i === 0 && this.messageId) {
           await this.sendQueue.enqueue(
-            () => this.bot.api.editMessageText(this.chatId, this.messageId!, chunk, {
+            () => this.bot.api.editMessageText(this.chatId, this.messageId!, html, {
               parse_mode: 'HTML',
             }),
             { type: 'other' },
           )
         } else {
           const msg = await this.sendQueue.enqueue(
-            () => this.bot.api.sendMessage(this.chatId, chunk, {
+            () => this.bot.api.sendMessage(this.chatId, html, {
               message_thread_id: this.threadId,
               parse_mode: 'HTML',
               disable_notification: true,
@@ -122,20 +133,28 @@ export class MessageDraft {
             this.messageId = msg.message_id
           }
         }
-      }
-    } catch {
-      // Edit/send with HTML failed — only retry if content is new
-      if (this.buffer !== this.lastSentBuffer) {
+      } catch {
+        // HTML failed for this chunk — try plain text fallback
         try {
-          await this.sendQueue.enqueue(
-            () => this.bot.api.sendMessage(this.chatId, this.buffer.slice(0, 4096), {
-              message_thread_id: this.threadId,
-              disable_notification: true,
-            }),
-            { type: 'other' },
-          )
+          if (i === 0 && this.messageId) {
+            await this.sendQueue.enqueue(
+              () => this.bot.api.editMessageText(this.chatId, this.messageId!, mdChunks[i].slice(0, 4096)),
+              { type: 'other' },
+            )
+          } else {
+            const msg = await this.sendQueue.enqueue(
+              () => this.bot.api.sendMessage(this.chatId, mdChunks[i].slice(0, 4096), {
+                message_thread_id: this.threadId,
+                disable_notification: true,
+              }),
+              { type: 'other' },
+            )
+            if (msg) {
+              this.messageId = msg.message_id
+            }
+          }
         } catch {
-          // Give up
+          // Give up on this chunk
         }
       }
     }

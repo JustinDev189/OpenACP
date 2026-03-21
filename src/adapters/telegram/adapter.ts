@@ -21,6 +21,7 @@ import {
   setupCommands,
   setupMenuCallbacks,
   setupDangerousModeCallbacks,
+  setupIntegrateCallbacks,
   buildMenuKeyboard,
   buildSkillMessages,
   STATIC_COMMANDS,
@@ -220,6 +221,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       this.telegramConfig.chatId,
       () => this.assistantSession?.id,
     );
+    setupIntegrateCallbacks(this.bot, this.core as OpenACPCore);
     setupMenuCallbacks(
       this.bot,
       this.core as OpenACPCore,
@@ -236,7 +238,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     );
     this.permissionHandler.setupCallbackHandler();
 
-    // /handoff — show CLI resume command for the session in this topic
+    // /handoff — show terminal command to continue this session locally
     this.bot.command("handoff", async (ctx) => {
       const threadId = ctx.message?.message_thread_id;
       if (!threadId) return;
@@ -249,29 +251,34 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         return;
       }
 
+      // Try in-memory session first, then fallback to persisted store
       const session = this.core.sessionManager.getSessionByThread("telegram", String(threadId));
-      if (!session) {
-        await ctx.reply("No active session in this topic.", {
+      const record = session ? undefined : this.core.sessionManager.getRecordByThread("telegram", String(threadId));
+
+      const agentName = session?.agentName ?? record?.agentName;
+      const agentSessionId = session?.agentSessionId ?? record?.agentSessionId;
+
+      if (!agentName || !agentSessionId) {
+        await ctx.reply("No session found for this topic.", {
           message_thread_id: threadId,
         });
         return;
       }
 
       const { getAgentCapabilities } = await import("../../core/agent-registry.js");
-      const caps = getAgentCapabilities(session.agentName);
+      const caps = getAgentCapabilities(agentName);
 
       if (!caps.supportsResume || !caps.resumeCommand) {
-        await ctx.reply("This agent does not support CLI handoff.", {
+        await ctx.reply("This agent does not support session transfer.", {
           message_thread_id: threadId,
         });
         return;
       }
 
-      const agentSessionId = session.agentSessionId;
       const command = caps.resumeCommand(agentSessionId);
 
       await ctx.reply(
-        `Resume this session on CLI:\n\n<code>${command}</code>`,
+        `Run this in your terminal to continue the session:\n\n<code>${command}</code>`,
         {
           message_thread_id: threadId,
           parse_mode: "HTML",
@@ -300,11 +307,14 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         .map((a) => `${escapeHtml(a.name)}${a.name === config.defaultAgent ? " (default)" : ""}`)
         .join(", ");
       const workspace = escapeHtml(config.workspace.baseDir);
+      const allRecords = this.core.sessionManager.listRecords();
+      const activeCount = allRecords.filter(r => r.status === 'active' || r.status === 'initializing').length;
 
       const welcomeText =
         `👋 <b>OpenACP Assistant</b> is online.\n\n` +
         `Available agents: ${agentList}\n` +
-        `Workspace: <code>${workspace}</code>\n\n` +
+        `Workspace: <code>${workspace}</code>\n` +
+        `Sessions: ${activeCount} active / ${allRecords.length} total\n\n` +
         `<b>Select an action:</b>`;
 
       await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {

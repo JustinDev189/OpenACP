@@ -38,6 +38,7 @@ export class SessionManager {
         createdAt: session.createdAt.toISOString(),
         lastActiveAt: new Date().toISOString(),
         name: session.name,
+        dangerousMode: false,
         platform: {},
       });
     }

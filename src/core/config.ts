@@ -85,6 +85,10 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   tunnel: TunnelSchema,
+  integrations: z.record(z.string(), z.object({
+    installed: z.boolean(),
+    installedAt: z.string().optional(),
+  })).default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

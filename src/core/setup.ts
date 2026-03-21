@@ -520,15 +520,20 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
     if (agents["claude"]) {
       const { confirm } = await import("@inquirer/prompts");
       const installClaude = await confirm({
-        message: "Install handoff command for Claude CLI? (enables /openacp:handoff in Claude CLI)",
+        message: "Install session transfer for Claude? (enables /openacp:handoff in your terminal)",
         default: true,
       });
 
       if (installClaude) {
         try {
-          const { ClaudeIntegration } = await import("../cli/integrate.js");
-          const integration = new ClaudeIntegration();
-          await integration.install();
+          const { getIntegration } = await import("../cli/integrate.js");
+          const integration = getIntegration("claude");
+          if (integration) {
+            for (const item of integration.items) {
+              const result = await item.install();
+              for (const log of result.logs) console.log(`  ${log}`);
+            }
+          }
           console.log("Claude CLI integration installed.\n");
         } catch (err) {
           console.log(`Could not install Claude CLI integration: ${err instanceof Error ? err.message : err}`);
@@ -573,6 +578,7 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
         storeTtlMinutes: 60,
         auth: { enabled: false },
       },
+      integrations: {},
     };
 
     try {

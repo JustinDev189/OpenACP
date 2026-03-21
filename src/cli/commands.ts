@@ -22,7 +22,7 @@ Usage:
   openacp --version                    Show version
   openacp --help                       Show this help
   adopt <agent> <id>                   Adopt an external agent session into OpenACP
-  integrate <agent>                    Install/uninstall CLI integration for an agent
+  integrate <agent>                    Install/uninstall agent integration for session transfer
 
 API (requires running daemon):
   openacp api status                       Show active sessions
@@ -642,20 +642,28 @@ export async function cmdIntegrate(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  try {
+  for (const item of integration.items) {
     if (uninstall) {
-      console.log(`Removing ${agent} CLI integration...`);
-      await integration.uninstall();
-      console.log(`\n${agent} CLI integration removed.`);
+      console.log(`Removing ${agent}/${item.id}...`);
+      const result = await item.uninstall();
+      for (const log of result.logs) console.log(`  ${log}`);
+      if (result.success) {
+        console.log(`  ${item.name} removed.`);
+      } else {
+        console.log(`  Failed to remove ${item.name}.`);
+        process.exit(1);
+      }
     } else {
-      console.log(`Installing ${agent} CLI integration...`);
-      await integration.install();
-      console.log(`\n${agent} CLI integration installed.`);
-      console.log(`  Use /openacp:handoff in Claude CLI to hand off sessions.`);
+      console.log(`Installing ${agent}/${item.id}...`);
+      const result = await item.install();
+      for (const log of result.logs) console.log(`  ${log}`);
+      if (result.success) {
+        console.log(`  ${item.name} installed.`);
+      } else {
+        console.log(`  Failed to install ${item.name}.`);
+        process.exit(1);
+      }
     }
-  } catch (err) {
-    console.log(`Error: ${err instanceof Error ? err.message : err}`);
-    process.exit(1);
   }
 }
 

@@ -109,24 +109,24 @@ Once OpenACP is running, control it from Telegram:
 
 Each session gets its own forum topic. The agent streams responses in real time, shows tool calls, and asks for permission when needed.
 
-### Session Handoff
+### Session Transfer
 
-Transfer sessions between Claude CLI and Telegram:
+Move sessions between your terminal and Telegram:
 
-**CLI → Telegram:**
+**Terminal → Telegram:**
 ```bash
-# Install Claude CLI integration (one-time)
+# Install integration (one-time)
 openacp integrate claude
 
-# In Claude CLI, type /openacp:handoff to transfer current session
+# In Claude CLI, type /openacp:handoff to transfer the current session
 # Or manually:
 openacp adopt claude <session_id> --cwd /path/to/project
 ```
 
-**Telegram → CLI:**
-Type `/handoff` in any session topic. The bot will reply with the `claude --resume` command to paste in your terminal.
+**Telegram → Terminal:**
+Type `/handoff` in any session topic. The bot replies with a command you can paste in your terminal to continue.
 
-Sessions are not locked after handoff — you can continue from either side.
+Sessions are not locked after transfer — you can continue from either side.
 
 ## Roadmap
 

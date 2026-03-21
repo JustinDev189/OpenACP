@@ -167,7 +167,7 @@ export function formatUsage(usage: { tokensUsed?: number; contextSize?: number }
   return `${emoji} ${formatTokens(tokensUsed)} / ${formatTokens(contextSize)} tokens\n${bar} ${pct}%`
 }
 
-export function splitMessage(text: string, maxLength = 4096): string[] {
+export function splitMessage(text: string, maxLength = 3800): string[] {
   if (text.length <= maxLength) return [text]
   const chunks: string[] = []
   let remaining = text
@@ -177,14 +177,28 @@ export function splitMessage(text: string, maxLength = 4096): string[] {
       break
     }
     let splitAt = remaining.lastIndexOf('\n\n', maxLength)
-    if (splitAt === -1 || splitAt < maxLength * 0.5) {
+    if (splitAt === -1 || splitAt < maxLength * 0.2) {
       splitAt = remaining.lastIndexOf('\n', maxLength)
     }
-    if (splitAt === -1 || splitAt < maxLength * 0.5) {
+    if (splitAt === -1 || splitAt < maxLength * 0.2) {
       splitAt = maxLength
     }
+
+    // Avoid splitting inside a fenced code block (odd number of ``` before split point)
+    const candidate = remaining.slice(0, splitAt)
+    const fences = candidate.match(/```/g)
+    if (fences && fences.length % 2 !== 0) {
+      // Find the closing fence after split point
+      const closingFence = remaining.indexOf('```', splitAt)
+      if (closingFence !== -1) {
+        const afterFence = remaining.indexOf('\n', closingFence + 3)
+        splitAt = afterFence !== -1 ? afterFence + 1 : closingFence + 3
+      }
+      // If no closing fence, split anyway (incomplete code block)
+    }
+
     chunks.push(remaining.slice(0, splitAt))
-    remaining = remaining.slice(splitAt).trimStart()
+    remaining = remaining.slice(splitAt).replace(/^\n+/, '')
   }
   return chunks
 }
