@@ -1025,11 +1025,15 @@ async function agentsRun(nameOrId: string | undefined, extraArgs: string[]): Pro
   }
 
   // Strip leading "--" separator if present
-  const args = extraArgs[0] === "--" ? extraArgs.slice(1) : extraArgs;
+  const userArgs = extraArgs[0] === "--" ? extraArgs.slice(1) : extraArgs;
 
   const { spawnSync } = await import("node:child_process");
   const command = installed.command;
-  const fullArgs = [...args];
+
+  // Include agent's base args (e.g., package name for npx) but strip ACP-specific flags
+  const acpFlags = new Set(["--acp", "acp", "--acp=true"]);
+  const baseArgs = installed.args.filter((a) => !acpFlags.has(a));
+  const fullArgs = [...baseArgs, ...userArgs];
 
   console.log(`\n  Running: ${command} ${fullArgs.join(" ")}\n`);
 
