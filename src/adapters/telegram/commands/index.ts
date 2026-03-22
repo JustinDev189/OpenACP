@@ -9,6 +9,7 @@ import { handleEnableDangerous, handleDisableDangerous, handleUpdate, handleRest
 import { handleMenu, handleHelp, handleAgents, handleClear, buildMenuKeyboard } from "./menu.js";
 import { handleIntegrate } from "./integrate.js";
 import { handleSettings, setupSettingsCallbacks } from "./settings.js";
+import { handleDoctor, setupDoctorCallbacks } from "./doctor.js";
 
 export function setupCommands(
   bot: Bot,
@@ -30,6 +31,7 @@ export function setupCommands(
   bot.command("update", (ctx) => handleUpdate(ctx, core));
   bot.command("integrate", (ctx) => handleIntegrate(ctx, core));
   bot.command("clear", (ctx) => handleClear(ctx, assistant));
+  bot.command("doctor", (ctx) => handleDoctor(ctx));
 }
 
 export function setupAllCallbacks(
@@ -45,6 +47,9 @@ export function setupAllCallbacks(
 
   // Settings handlers — must be before broad m: handler
   setupSettingsCallbacks(bot, core, getAssistantSession ?? (() => undefined))
+
+  // Doctor handlers — must be before broad m: handler
+  setupDoctorCallbacks(bot);
 
   // Broad m: handler for remaining menu dispatch — LAST
   bot.callbackQuery(/^m:/, async (ctx) => {
@@ -96,6 +101,7 @@ export { executeCancelSession } from "./session.js";
 export { setupDangerousModeCallbacks, buildDangerousModeKeyboard } from "./admin.js";
 export { setupIntegrateCallbacks } from "./integrate.js";
 export { setupSettingsCallbacks } from "./settings.js";
+export { setupDoctorCallbacks } from "./doctor.js";
 
 export const STATIC_COMMANDS = [
   { command: "new", description: "Create new session" },
@@ -113,4 +119,5 @@ export const STATIC_COMMANDS = [
   { command: "clear", description: "Clear assistant history" },
   { command: "restart", description: "Restart OpenACP" },
   { command: "update", description: "Update to latest version and restart" },
+  { command: "doctor", description: "Run system diagnostics" },
 ];

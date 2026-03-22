@@ -32,6 +32,21 @@ ACP Protocol (JSON-RPC / stdio)                  Tunnel Service
 AI Agent (Claude Code, Codex, ...)            File/Diff Viewer
 ```
 
+## Screenshots
+
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="docs/images/menu.png" width="250" /><br /><b>Control Panel</b><br />Manage sessions, agents, and settings</td>
+<td align="center"><img src="docs/images/agent-working.png" width="250" /><br /><b>Agent at Work</b><br />Plans, reads files, writes code</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/images/tool-calls.png" width="250" /><br /><b>Real-time Tool Calls</b><br />See every action the agent takes</td>
+<td align="center"><img src="docs/images/skills.png" width="250" /><br /><b>Agent Skills</b><br />Brainstorming, TDD, debugging & more</td>
+</tr>
+</table>
+</div>
+
 ## Features
 
 - **Multi-agent** — Claude Code, Codex, or any ACP-compatible agent

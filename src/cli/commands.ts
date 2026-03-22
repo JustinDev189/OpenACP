@@ -16,6 +16,8 @@ Usage:
   openacp config set <key> <value>     Set a config value
   openacp reset                        Delete all data and start fresh
   openacp update                       Update to latest version
+  openacp doctor                         Run system diagnostics
+  openacp doctor --dry-run               Check only, don't fix
   openacp install <package>            Install a plugin adapter
   openacp uninstall <package>          Uninstall a plugin adapter
   openacp plugins                      List installed plugins
@@ -732,6 +734,61 @@ export async function cmdIntegrate(args: string[]): Promise<void> {
         process.exit(1);
       }
     }
+  }
+}
+
+export async function cmdDoctor(args: string[]): Promise<void> {
+  const dryRun = args.includes("--dry-run");
+  const { DoctorEngine } = await import("../core/doctor/index.js");
+  const engine = new DoctorEngine({ dryRun });
+
+  console.log("\n🩺 OpenACP Doctor\n");
+
+  const report = await engine.runAll();
+
+  // Render results
+  const icons = { pass: "\x1b[32m✅\x1b[0m", warn: "\x1b[33m⚠️\x1b[0m", fail: "\x1b[31m❌\x1b[0m" };
+
+  for (const category of report.categories) {
+    console.log(`\x1b[1m\x1b[36m${category.name}\x1b[0m`);
+    for (const result of category.results) {
+      console.log(`  ${icons[result.status]} ${result.message}`);
+    }
+    console.log();
+  }
+
+  // Handle risky fixes
+  if (report.pendingFixes.length > 0) {
+    console.log("\x1b[1mFixable issues:\x1b[0m\n");
+    for (const pending of report.pendingFixes) {
+      if (dryRun) {
+        console.log(`  🔧 ${pending.message} (use without --dry-run to fix)`);
+      } else {
+        const { confirm } = await import("@inquirer/prompts");
+        const shouldFix = await confirm({
+          message: `Fix: ${pending.message}?`,
+          default: false,
+        });
+        if (shouldFix) {
+          const fixResult = await pending.fix();
+          if (fixResult.success) {
+            console.log(`  \x1b[32m✓ ${fixResult.message}\x1b[0m`);
+          } else {
+            console.log(`  \x1b[31m✗ Fix failed: ${fixResult.message}\x1b[0m`);
+          }
+        }
+      }
+    }
+    console.log();
+  }
+
+  // Summary
+  const { passed, warnings, failed, fixed } = report.summary;
+  const fixedStr = fixed > 0 ? `, ${fixed} fixed` : "";
+  console.log(`Result: ${passed} passed, ${warnings} warnings, ${failed} failed${fixedStr}`);
+
+  if (failed > 0) {
+    process.exit(1);
   }
 }
 

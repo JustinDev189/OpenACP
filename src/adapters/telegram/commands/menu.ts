@@ -16,10 +16,11 @@ export function buildMenuKeyboard(): InlineKeyboard {
     .text("⚙️ Settings", "m:settings")
     .text("🔗 Integrate", "m:integrate")
     .row()
-    .text("❓ Help", "m:help")
     .text("🔄 Restart", "m:restart")
+    .text("⬆️ Update", "m:update")
     .row()
-    .text("⬆️ Update", "m:update");
+    .text("❓ Help", "m:help")
+    .text("🩺 Doctor", "m:doctor");
 }
 
 export async function handleMenu(ctx: Context): Promise<void> {

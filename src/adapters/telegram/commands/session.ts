@@ -137,9 +137,9 @@ export async function handleTopics(ctx: Context, core: OpenACPCore): Promise<voi
       (headlessCount > 0 ? ` (${headlessCount} headless hidden)` : "");
     const truncated = records.length > MAX_DISPLAY ? `\n\n<i>...and ${records.length - MAX_DISPLAY} more</i>` : "";
 
-    // Count by status for cleanup buttons
-    const finishedCount = records.filter((r) => r.status === "finished").length;
-    const errorCount = records.filter((r) => r.status === "error" || r.status === "cancelled").length;
+    // Count by status for cleanup buttons (include headless sessions)
+    const finishedCount = allRecords.filter((r) => r.status === "finished").length;
+    const errorCount = allRecords.filter((r) => r.status === "error" || r.status === "cancelled").length;
 
     const keyboard = new InlineKeyboard();
     if (finishedCount > 0) {
@@ -151,7 +151,7 @@ export async function handleTopics(ctx: Context, core: OpenACPCore): Promise<voi
     if (finishedCount + errorCount > 0) {
       keyboard.text(`Cleanup all non-active (${finishedCount + errorCount})`, "m:cleanup:all").row();
     }
-    keyboard.text(`⚠️ Cleanup ALL (${records.length})`, "m:cleanup:everything").row();
+    keyboard.text(`⚠️ Cleanup ALL (${allRecords.length})`, "m:cleanup:everything").row();
     keyboard.text("Refresh", "m:topics");
 
     await ctx.reply(
@@ -166,10 +166,7 @@ export async function handleTopics(ctx: Context, core: OpenACPCore): Promise<voi
 
 export async function handleCleanup(ctx: Context, core: OpenACPCore, chatId: number, statuses: string[]): Promise<void> {
   const allRecords = core.sessionManager.listRecords();
-  const cleanable = allRecords.filter((r) => {
-    const platform = r.platform as { topicId?: number };
-    return !!platform?.topicId && statuses.includes(r.status);
-  });
+  const cleanable = allRecords.filter((r) => statuses.includes(r.status));
 
   if (cleanable.length === 0) {
     await ctx.reply("Nothing to clean up.", { parse_mode: "HTML" });
@@ -212,8 +209,7 @@ export async function handleCleanupEverything(
   const allRecords = core.sessionManager.listRecords();
   const cleanable = allRecords.filter((r) => {
     const platform = r.platform as { topicId?: number };
-    if (!platform?.topicId) return false;
-    if (systemTopicIds && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
+    if (systemTopicIds && platform?.topicId && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
     return true;
   });
 
@@ -266,8 +262,7 @@ export async function handleCleanupEverythingConfirmed(
   const allRecords = core.sessionManager.listRecords();
   const cleanable = allRecords.filter((r) => {
     const platform = r.platform as { topicId?: number };
-    if (!platform?.topicId) return false;
-    if (systemTopicIds && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
+    if (systemTopicIds && platform?.topicId && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
     return true;
   });
 

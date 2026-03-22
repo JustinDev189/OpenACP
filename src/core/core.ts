@@ -149,7 +149,13 @@ export class OpenACPCore {
       session = (await this.lazyResume(message)) ?? undefined;
     }
 
-    if (!session) return;
+    if (!session) {
+      log.warn(
+        { channelId: message.channelId, threadId: message.threadId },
+        "No session found for thread (in-memory miss + lazy resume returned null)",
+      );
+      return;
+    }
 
     // Update activity timestamp
     this.sessionManager.patchRecord(session.id, { lastActiveAt: new Date().toISOString() });
@@ -214,6 +220,14 @@ export class OpenACPCore {
     }
 
     // 6. Persist initial record
+    // Preserve existing platform data (e.g. topicId) when resuming an existing session
+    const existingRecord = this.sessionStore?.get(session.id);
+    const platform: Record<string, unknown> = {
+      ...(existingRecord?.platform ?? {}),
+    };
+    if (session.threadId) {
+      platform.topicId = Number(session.threadId);
+    }
     await this.sessionManager.patchRecord(session.id, {
       sessionId: session.id,
       agentSessionId: agentInstance.sessionId,
@@ -224,7 +238,7 @@ export class OpenACPCore {
       createdAt: session.createdAt.toISOString(),
       lastActiveAt: new Date().toISOString(),
       name: session.name,
-      platform: {},
+      platform,
     });
 
     log.info(
@@ -391,10 +405,27 @@ export class OpenACPCore {
       message.channelId,
       (p) => String(p.topicId) === message.threadId,
     );
-    if (!record) return null;
+    if (!record) {
+      log.debug(
+        { threadId: message.threadId, channelId: message.channelId },
+        "No session record found for thread",
+      );
+      return null;
+    }
 
     // Don't resume cancelled/error sessions
-    if (record.status === "cancelled" || record.status === "error") return null;
+    if (record.status === "cancelled" || record.status === "error") {
+      log.debug(
+        { threadId: message.threadId, sessionId: record.sessionId, status: record.status },
+        "Skipping resume of cancelled/error session",
+      );
+      return null;
+    }
+
+    log.info(
+      { threadId: message.threadId, sessionId: record.sessionId, status: record.status },
+      "Lazy resume: found record, attempting resume",
+    );
 
     const resumePromise = (async (): Promise<Session | null> => {
       try {
