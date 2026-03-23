@@ -1,46 +1,86 @@
-# Telegram /clear Command for Session Topics
+# /archive Command — Design Spec
 
 ## Summary
 
-Add a `/clear` command that clears all messages in the current session's Telegram topic by recreating the forum topic. The agent subprocess stays alive — only the visual chat history is wiped. This gives users a clean slate when a topic gets cluttered with long tool outputs, streaming artifacts, or old conversation history.
+Add an `/archive` command that archives the current session topic by recreating the Telegram forum topic. The agent subprocess stays alive — only the visual chat history is wiped. Also exposed via the API (`POST /sessions/:id/archive`) so CLI and other adapters can use the same functionality.
+
+Named `/archive` (not `/clear`) because `/clear` is already used for resetting the Assistant's conversation history. "Archive" is more user-friendly — it aligns with common UX patterns (Gmail, Slack) and reduces user anxiety about destructive actions.
 
 ## Requirements
 
 - **Target**: Users working in session topics who want a clean chat view without losing their agent session
-- **Scope**: Session topics only — `/clear` in Assistant topic already exists (respawn behavior)
+- **Scope**: Session topics only — if used in Assistant or other topics, reply with guidance
 - **Agent continuity**: The ACP subprocess must NOT be restarted — only the Telegram topic is recreated
 - **Speed**: Should complete in under 3 seconds (topic delete + create + rewire)
-- **Confirmation**: Ask for confirmation before clearing (destructive, messages are permanently deleted)
+- **Confirmation**: Ask for confirmation before archiving (destructive, messages are permanently deleted)
+- **Multi-surface**: Core archive logic accessible from Telegram, API, and CLI
+- **Assistant guidance**: When user asks about archiving in Assistant topic, explain the command and guide them to the session topic
 
 ## Non-Goals
 
 - Clearing agent conversation memory/context (out of scope — that's agent-side)
 - Selective message deletion (too slow with Telegram rate limits — 3s per message)
-- Chat export before clearing (could be a future feature)
+- Chat export before archiving (could be a future feature)
+- Automatically suggesting archive when topics get long (future enhancement)
 
 ## Design
+
+### Architecture
+
+Core archive logic lives in `OpenACPCore` (not in the Telegram adapter) so all surfaces can use it:
+
+```
+/archive (Telegram)  ──→  core.archiveSession(sessionId)  ←── POST /sessions/:id/archive (API)
+                                    │
+                          ┌─────────┴─────────┐
+                          │ 1. Validate state  │
+                          │ 2. Notify adapter  │
+                          │ 3. Adapter recreates│
+                          │    topic + rewires  │
+                          └─────────────────────┘
+```
 
 ### Approach: Topic Recreation
 
 Telegram has no bulk-delete or topic-purge API. Deleting messages one-by-one is impractical (100 messages = 5+ minutes at 3s rate limit). Instead:
 
-1. **Close old topic** via `deleteForumTopic(chatId, oldTopicId)` — permanently removes topic and all messages
-2. **Create new topic** via `createForumTopic(chatId, name)` — fresh empty topic
-3. **Rewire session** — update `session.platform.topicId` and session store record
-4. **Cleanup trackers** — reset MessageDraft, ToolCallTracker, ActivityTracker for this session
-5. **Send confirmation** — post a "cleared" message in the new topic
+1. **Core validates** session state (must be active, not initializing)
+2. **Core calls** `adapter.archiveSessionTopic(sessionId)` — adapter-specific topic handling
+3. **Adapter deletes old topic** via `deleteForumTopic(chatId, oldTopicId)`
+4. **Adapter creates new topic** via `createForumTopic(chatId, name)` — fresh empty topic
+5. **Adapter rewires session** — update `session.threadId` and persist via `patchRecord()`
+6. **Adapter cleans up trackers** — reset MessageDraft, ToolCallTracker, ActivityTracker
+7. **Adapter sends confirmation** in the new topic
 
-### Command Flow
+### Telegram Command Flow
 
 ```
-User sends /clear in session topic
+User sends /archive in session topic
   → Bot replies: "⚠️ This will permanently delete all messages in this topic. Continue?"
-  → [Yes, clear] [Cancel] inline buttons
-  → User taps "Yes, clear"
-  → Bot deletes old topic
-  → Bot creates new topic with same name + icon
-  → Bot updates session routing to new topic
-  → Bot sends "✅ Chat cleared. Session continues." in new topic
+  → [Yes, archive] [Cancel] inline buttons
+  → User taps "Yes, archive"
+  → Bot calls core.archiveSession(sessionId)
+  → Core delegates to adapter.archiveSessionTopic()
+  → Adapter deletes old topic, creates new one, rewires session
+  → Bot sends "✅ Topic archived. Session continues." in new topic
+```
+
+### API Endpoint
+
+```
+POST /api/sessions/:id/archive
+Response: { ok: true, newTopicId: number } | { ok: false, error: string }
+```
+
+### Assistant Guidance
+
+When a user runs `/archive` in the Assistant topic or asks about archiving:
+
+```
+"ℹ️ /archive works in session topics — it recreates the topic with a clean
+chat view while keeping your agent session alive.
+
+Go to the session topic you want to archive and type /archive there."
 ```
 
 ### Key Constraints
@@ -48,39 +88,42 @@ User sends /clear in session topic
 | Constraint | Solution |
 |-----------|----------|
 | `deleteForumTopic` is permanent | Confirmation prompt before executing |
-| New topic gets a different `topicId` | Update session record's `platform.topicId` in session store |
+| New topic gets a different `topicId` | Persist new topicId via `sessionManager.patchRecord()` |
 | Deep links to old topic break | Accepted trade-off — noted in confirmation message |
-| Active streaming/draft in progress | Finalize draft before clearing, abort pending edits |
+| Active streaming/draft in progress | Finalize draft before archiving, abort pending edits |
 | Adapter routing uses `topicId` for message delivery | Must update all in-memory routing maps |
 
 ### Error Handling
 
 | Error | Behavior |
 |-------|----------|
-| `deleteForumTopic` fails (403 — no permission) | Reply "Cannot clear: bot needs admin rights to manage topics" |
-| `createForumTopic` fails after delete | Critical — reply in Notifications topic: "Topic recreation failed for session X. Session is orphaned." |
+| `deleteForumTopic` fails (403 — no permission) | Reply "Cannot archive: bot needs admin rights to manage topics" |
+| `createForumTopic` fails after delete | Critical — notify in Notifications topic: "Topic recreation failed for session X. Session is orphaned." |
 | Session not found in topic | Reply "No active session in this topic" |
 | Session is in `initializing` state | Reply "Please wait for session to be ready" |
-| `/clear` used in non-session topic | Reply "This command only works in session topics" |
+| `/archive` used in non-session topic | Reply with guidance to go to a session topic |
 
 ### Callback Prefix
 
-Use `cl:` prefix for clear confirmation callbacks to avoid conflicts with existing `p:` (permission) and `m:` (menu) prefixes.
+Use `ar:` prefix for archive confirmation callbacks to avoid conflicts with existing `p:` (permission) and `m:` (menu) prefixes.
 
-- `cl:yes:<sessionId>` — confirm clear
-- `cl:no:<sessionId>` — cancel clear
+- `ar:yes:<sessionId>` — confirm archive
+- `ar:no:<sessionId>` — cancel archive
 
 ### Affected Components
 
-**Adapter layer** (Telegram-specific):
-- `commands.ts` — register `/clear` command handler
-- `adapter.ts` — add `clearSessionTopic()` method that handles topic recreation + rewiring
-- `topics.ts` — reuse `createSessionTopic()`, add `deleteSessionTopic()`
+**Core layer**:
+- `core.ts` — add `archiveSession(sessionId)` method that validates + delegates to adapter
+- `channel.ts` — add optional `archiveSessionTopic(sessionId)` to `ChannelAdapter` base
+- `api-server.ts` — add `POST /sessions/:id/archive` endpoint
 
-**Core layer** (minimal changes):
-- `session-store.ts` — `updatePlatformData(sessionId, platform)` to persist new topicId
+**Adapter layer** (Telegram-specific):
+- `commands/session.ts` — add `handleArchive()` and `handleArchiveConfirm()`
+- `commands/index.ts` — register `/archive` command and `ar:` callbacks
+- `adapter.ts` — implement `archiveSessionTopic()` override
+- `topics.ts` — add `deleteSessionTopic()` helper
 
 **No changes needed**:
 - `session.ts` — agent subprocess is untouched
-- `core.ts` — routing goes through adapter, not core
 - `agent-instance.ts` — completely unaware of Telegram topics
+- `session-store.ts` — already has `patchRecord()` via SessionManager

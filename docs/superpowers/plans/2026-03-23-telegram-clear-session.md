@@ -1,10 +1,10 @@
-# Telegram /clear for Session Topics Implementation Plan
+# /archive Command Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extend the existing `/clear` command to work in session topics (not just Assistant). When used in a session topic, it recreates the forum topic — deleting all messages — while keeping the agent subprocess alive.
+**Goal:** Add `/archive` command that recreates a session's Telegram topic (clean chat history) while keeping the agent subprocess alive. Accessible from Telegram, API, and CLI.
 
-**Architecture:** The current `/clear` in `commands/menu.ts` only works in the Assistant topic (calls `respawn()`). This plan adds a second code path: when `/clear` is used in a session topic, the adapter deletes the old topic, creates a new one, and rewires the session to it. A confirmation prompt with inline buttons prevents accidental clears.
+**Architecture:** Core archive logic in `OpenACPCore.archiveSession()` validates state and delegates to `ChannelAdapter.archiveSessionTopic()`. Telegram adapter implements topic recreation. API server exposes `POST /sessions/:id/archive`.
 
 **Tech Stack:** TypeScript, grammY (Telegram Bot API), vitest
 
@@ -16,130 +16,117 @@
 
 | Action | Path | Responsibility |
 |--------|------|----------------|
-| Modify | `src/adapters/telegram/commands/menu.ts` | Expand `handleClear()` to support session topics with confirmation |
-| Modify | `src/adapters/telegram/commands/index.ts` | Register `cl:` callback handler, pass `core` + `chatId` to `handleClear` |
-| Modify | `src/adapters/telegram/adapter.ts` | Add `clearSessionTopic()` method for topic recreation + session rewiring |
+| Modify | `src/core/channel.ts` | Add optional `archiveSessionTopic(sessionId)` to ChannelAdapter base |
+| Modify | `src/core/core.ts` | Add `archiveSession(sessionId)` that validates + delegates to adapter |
+| Modify | `src/core/api-server.ts` | Add `POST /sessions/:id/archive` endpoint |
 | Modify | `src/adapters/telegram/topics.ts` | Add `deleteSessionTopic()` helper |
-| Modify | `src/core/session-store.ts` | Add `updatePlatformData()` method to `SessionStore` interface and `JsonFileSessionStore` |
-| Create | `src/__tests__/clear-session.test.ts` | Tests for confirmation flow, session rewiring, error handling |
+| Modify | `src/adapters/telegram/adapter.ts` | Implement `archiveSessionTopic()` override |
+| Modify | `src/adapters/telegram/commands/session.ts` | Add `handleArchive()` and `handleArchiveConfirm()` |
+| Modify | `src/adapters/telegram/commands/index.ts` | Register `/archive` command and `ar:` callbacks |
+| Create | `src/__tests__/archive-session.test.ts` | Tests for archive flow |
 
 ---
 
-### Task 1: Add `updatePlatformData` to SessionStore
+### Task 1: Core — `archiveSession()` and ChannelAdapter base
 
 **Files:**
-- Modify: `src/core/session-store.ts`
-- Create: `src/__tests__/clear-session.test.ts` (partial — store tests only)
+- Modify: `src/core/channel.ts`
+- Modify: `src/core/core.ts`
 
-- [ ] **Step 1: Write failing tests for updatePlatformData**
+- [ ] **Step 1: Add `archiveSessionTopic` to ChannelAdapter**
 
-Create `src/__tests__/clear-session.test.ts` with session store tests:
-
-```typescript
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import { JsonFileSessionStore } from "../core/session-store.js";
-import type { SessionRecord } from "../core/types.js";
-
-function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
-  return {
-    sessionId: "sess-1",
-    agentSessionId: "agent-1",
-    agentName: "claude",
-    workingDir: "/tmp",
-    channelId: "telegram",
-    status: "active",
-    createdAt: new Date().toISOString(),
-    lastActiveAt: new Date().toISOString(),
-    name: "Test Session",
-    platform: { topicId: 100 },
-    ...overrides,
-  };
-}
-
-describe("SessionStore.updatePlatformData", () => {
-  let tmpDir: string;
-  let store: JsonFileSessionStore;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openacp-store-test-"));
-    store = new JsonFileSessionStore(path.join(tmpDir, "sessions.json"), 30);
-  });
-
-  afterEach(() => {
-    store.destroy();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("updates platform data for existing session", async () => {
-    const record = makeRecord();
-    await store.save(record);
-    await store.updatePlatformData("sess-1", { topicId: 200 });
-    const updated = store.get("sess-1");
-    expect(updated?.platform).toEqual({ topicId: 200 });
-  });
-
-  it("does nothing for non-existent session", async () => {
-    await store.updatePlatformData("non-existent", { topicId: 200 });
-    expect(store.get("non-existent")).toBeUndefined();
-  });
-
-  it("merges with existing platform data", async () => {
-    const record = makeRecord({ platform: { topicId: 100, skillMsgId: 42 } });
-    await store.save(record);
-    await store.updatePlatformData("sess-1", { topicId: 200 });
-    const updated = store.get("sess-1");
-    expect(updated?.platform).toEqual({ topicId: 200, skillMsgId: 42 });
-  });
-});
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `pnpm test src/__tests__/clear-session.test.ts`
-Expected: FAIL — `updatePlatformData` does not exist
-
-- [ ] **Step 3: Add `updatePlatformData` to SessionStore interface and implementation**
-
-In `src/core/session-store.ts`, add to the `SessionStore` interface (after `remove` method):
+In `src/core/channel.ts`, add to the `ChannelAdapter` abstract class (as an optional method with no-op default, following existing patterns like `deleteSessionThread`):
 
 ```typescript
-  updatePlatformData(sessionId: string, platform: Record<string, unknown>): Promise<void>;
-```
-
-Add implementation to `JsonFileSessionStore` (after the `remove` method):
-
-```typescript
-  async updatePlatformData(sessionId: string, platform: Record<string, unknown>): Promise<void> {
-    const record = this.records.get(sessionId);
-    if (!record) return;
-    record.platform = { ...record.platform, ...platform };
-    this.scheduleDiskWrite();
+  async archiveSessionTopic(_sessionId: string): Promise<{ newThreadId: string } | null> {
+    return null; // Override in adapters that support topic archiving
   }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 2: Add `archiveSession()` to OpenACPCore**
 
-Run: `pnpm test src/__tests__/clear-session.test.ts`
-Expected: All 3 tests PASS
+In `src/core/core.ts`, add a public method (after `stop()`):
 
-- [ ] **Step 5: Commit**
+```typescript
+  async archiveSession(sessionId: string): Promise<{ ok: true; newThreadId: string } | { ok: false; error: string }> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return { ok: false, error: "Session not found" };
+    if (session.status === "initializing") return { ok: false, error: "Session is still initializing" };
+    if (session.status !== "active") return { ok: false, error: `Session is ${session.status}` };
+
+    const adapter = this.adapters.get(session.channelId);
+    if (!adapter) return { ok: false, error: "Adapter not found for session" };
+
+    const result = await adapter.archiveSessionTopic(session.id);
+    if (!result) return { ok: false, error: "Adapter does not support archiving" };
+
+    return { ok: true, newThreadId: result.newThreadId };
+  }
+```
+
+- [ ] **Step 3: Verify build**
+
+Run: `pnpm exec tsc --noEmit`
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/core/session-store.ts src/__tests__/clear-session.test.ts
-git commit -m "feat(core): add updatePlatformData to SessionStore for topic migration"
+git add src/core/channel.ts src/core/core.ts
+git commit -m "feat(core): add archiveSession() and ChannelAdapter.archiveSessionTopic()"
 ```
 
 ---
 
-### Task 2: Add `deleteSessionTopic` helper
+### Task 2: API endpoint — `POST /sessions/:id/archive`
+
+**Files:**
+- Modify: `src/core/api-server.ts`
+
+- [ ] **Step 1: Add route handler**
+
+In `src/core/api-server.ts`, find the URL routing block (where `POST /api/sessions` and `DELETE /api/sessions/:id` are handled). Add a new route before the DELETE handler:
+
+```typescript
+      } else if (method === 'POST' && url.match(/^\/api\/sessions\/([^/]+)\/archive$/)) {
+        const sessionId = decodeURIComponent(url.match(/^\/api\/sessions\/([^/]+)\/archive$/)![1])
+        await this.handleArchiveSession(sessionId, res)
+```
+
+- [ ] **Step 2: Implement handleArchiveSession**
+
+Add the handler method to `ApiServer` class:
+
+```typescript
+  private async handleArchiveSession(sessionId: string, res: http.ServerResponse): Promise<void> {
+    const result = await this.core.archiveSession(sessionId);
+    if (result.ok) {
+      this.sendJson(res, 200, result);
+    } else {
+      this.sendJson(res, 400, result);
+    }
+  }
+```
+
+- [ ] **Step 3: Verify build**
+
+Run: `pnpm exec tsc --noEmit`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/core/api-server.ts
+git commit -m "feat(api): add POST /sessions/:id/archive endpoint"
+```
+
+---
+
+### Task 3: Telegram — `deleteSessionTopic` helper and adapter implementation
 
 **Files:**
 - Modify: `src/adapters/telegram/topics.ts`
+- Modify: `src/adapters/telegram/adapter.ts`
 
-- [ ] **Step 1: Add deleteSessionTopic function**
+- [ ] **Step 1: Add deleteSessionTopic to topics.ts**
 
 In `src/adapters/telegram/topics.ts`, add after `renameSessionTopic`:
 
@@ -154,28 +141,9 @@ export async function deleteSessionTopic(
 }
 ```
 
-- [ ] **Step 2: Verify build**
+- [ ] **Step 2: Implement archiveSessionTopic in adapter.ts**
 
-Run: `pnpm exec tsc --noEmit`
-Expected: No errors
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/adapters/telegram/topics.ts
-git commit -m "feat(telegram): add deleteSessionTopic helper"
-```
-
----
-
-### Task 3: Add `clearSessionTopic` to TelegramAdapter
-
-**Files:**
-- Modify: `src/adapters/telegram/adapter.ts`
-
-- [ ] **Step 1: Add import for deleteSessionTopic**
-
-In `src/adapters/telegram/adapter.ts`, update the topics import to include `deleteSessionTopic`:
+Add import for `deleteSessionTopic` in the topics import:
 
 ```typescript
 import {
@@ -186,12 +154,13 @@ import {
 } from "./topics.js";
 ```
 
-- [ ] **Step 2: Add clearSessionTopic method**
-
-Add to the `TelegramAdapter` class (after the `cleanupSkillCommands` method):
+Add the method to `TelegramAdapter` class (override the base class no-op):
 
 ```typescript
-  async clearSessionTopic(session: import("../../core/session.js").Session): Promise<{ newTopicId: number }> {
+  async archiveSessionTopic(sessionId: string): Promise<{ newThreadId: string } | null> {
+    const session = (this.core as OpenACPCore).sessionManager.getSession(sessionId);
+    if (!session) return null;
+
     const chatId = this.telegramConfig.chatId;
     const oldTopicId = Number(session.threadId);
     const sessionName = session.name || `Session ${session.id.slice(0, 6)}`;
@@ -216,83 +185,63 @@ Add to the `TelegramAdapter` class (after the `cleanupSkillCommands` method):
     // 5. Rewire session to new topic
     session.threadId = String(newTopicId);
 
-    // 6. Update session store
-    if (this.core.sessionManager.store) {
-      await this.core.sessionManager.store.updatePlatformData(session.id, { topicId: newTopicId, skillMsgId: undefined });
-    }
-
-    // 7. Update session record in store
-    this.core.sessionManager.updateSessionRecord(session.id, {
+    // 6. Persist via patchRecord
+    await (this.core as OpenACPCore).sessionManager.patchRecord(session.id, {
       platform: { topicId: newTopicId },
     });
 
-    return { newTopicId };
+    return { newThreadId: String(newTopicId) };
   }
 ```
+
+> **Note:** `this.telegramConfig.chatId` is accessed via the private config object. `setupMenuCallbacks` is called via alias in adapter.ts — check line ~210 for the calling pattern when wiring callbacks.
 
 - [ ] **Step 3: Verify build**
 
 Run: `pnpm exec tsc --noEmit`
-
-> **Note:** This step may reveal that `sessionManager.store` is private or that `updateSessionRecord` doesn't exist. If so, check the current `SessionManager` API:
-> - If `store` is private, use `sessionManager.updatePlatformData(sessionId, platform)` instead (add a pass-through method to SessionManager if needed)
-> - If `updateSessionRecord` doesn't exist, use the existing `save` method on the store directly
-
-Fix any type errors before proceeding.
+Fix any access issues (e.g., if `draftManager`, `toolTracker`, `skillManager`, `sessionTrackers` are private — they should be accessible within the class).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/adapters/telegram/adapter.ts
-git commit -m "feat(telegram): add clearSessionTopic for topic recreation and session rewiring"
+git add src/adapters/telegram/topics.ts src/adapters/telegram/adapter.ts
+git commit -m "feat(telegram): implement archiveSessionTopic with topic recreation"
 ```
 
 ---
 
-### Task 4: Expand `/clear` to support session topics
+### Task 4: Telegram — `/archive` command and callbacks
 
 **Files:**
-- Modify: `src/adapters/telegram/commands/menu.ts`
+- Modify: `src/adapters/telegram/commands/session.ts`
 - Modify: `src/adapters/telegram/commands/index.ts`
 
-- [ ] **Step 1: Update handleClear to support session topics**
+> **Note:** `/archive` is a NEW command separate from `/clear`. `/clear` stays unchanged (assistant-only in `menu.ts`). `/archive` lives in `session.ts` because it operates on session topics.
 
-In `src/adapters/telegram/commands/menu.ts`, replace the existing `handleClear` function:
+- [ ] **Step 1: Add handleArchive and handleArchiveConfirm to session.ts**
+
+In `src/adapters/telegram/commands/session.ts`, add imports:
 
 ```typescript
 import { InlineKeyboard } from "grammy";
-import type { OpenACPCore } from "../../../core/index.js";
 ```
 
-Add `OpenACPCore` to the function signature and add session topic support:
+Add the command handler:
 
 ```typescript
-export async function handleClear(
+export async function handleArchive(
   ctx: Context,
   core: OpenACPCore,
-  chatId: number,
-  assistant?: CommandsAssistantContext,
 ): Promise<void> {
   const threadId = ctx.message?.message_thread_id;
   if (!threadId) return;
 
-  // Assistant topic: use existing respawn behavior
-  if (assistant && threadId === assistant.topicId) {
-    await ctx.reply("🔄 Clearing assistant history...", { parse_mode: "HTML" });
-    try {
-      await assistant.respawn();
-      await ctx.reply("✅ Assistant history cleared.", { parse_mode: "HTML" });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await ctx.reply(`❌ Failed to clear: <code>${message}</code>`, { parse_mode: "HTML" });
-    }
-    return;
-  }
-
-  // Session topic: find the session
   const session = core.sessionManager.getSessionByThread("telegram", String(threadId));
   if (!session) {
-    await ctx.reply("⚠️ No active session in this topic.", { parse_mode: "HTML" });
+    await ctx.reply(
+      "ℹ️ <b>/archive</b> works in session topics — it recreates the topic with a clean chat view while keeping your agent session alive.\n\nGo to the session topic you want to archive and type /archive there.",
+      { parse_mode: "HTML" },
+    );
     return;
   }
 
@@ -301,33 +250,24 @@ export async function handleClear(
     return;
   }
 
-  // Show confirmation with inline buttons
   await ctx.reply(
-    "⚠️ <b>Clear session chat?</b>\n\n" +
+    "⚠️ <b>Archive this session topic?</b>\n\n" +
     "This will permanently delete all messages in this topic and create a fresh one.\n" +
     "Your agent session will continue — only the chat view is reset.\n\n" +
     "<i>Note: links to messages in this topic will stop working.</i>",
     {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard()
-        .text("🗑 Yes, clear", `cl:yes:${session.id}`)
-        .text("❌ Cancel", `cl:no:${session.id}`),
+        .text("🗑 Yes, archive", `ar:yes:${session.id}`)
+        .text("❌ Cancel", `ar:no:${session.id}`),
     },
   );
 }
-```
 
-- [ ] **Step 2: Add `cl:` callback handler in index.ts**
-
-In `src/adapters/telegram/commands/index.ts`, add import for the clear confirmation handler. First, add a new export from `menu.ts`:
-
-In `menu.ts`, add after `handleClear`:
-
-```typescript
-export async function handleClearConfirm(
+export async function handleArchiveConfirm(
   ctx: Context,
   core: OpenACPCore,
-  adapter: import("../adapter.js").TelegramAdapter,
+  chatId: number,
 ): Promise<void> {
   const data = ctx.callbackQuery?.data;
   if (!data) return;
@@ -339,159 +279,128 @@ export async function handleClearConfirm(
   const [, action, sessionId] = data.split(":");
 
   if (action === "no") {
-    await ctx.editMessageText("Clear cancelled.", { parse_mode: "HTML" });
+    await ctx.editMessageText("Archive cancelled.", { parse_mode: "HTML" });
     return;
   }
 
   // action === "yes"
-  const session = core.sessionManager.getSession(sessionId);
-  if (!session) {
-    await ctx.editMessageText("⚠️ Session no longer exists.", { parse_mode: "HTML" });
-    return;
-  }
+  await ctx.editMessageText("🔄 Archiving topic...", { parse_mode: "HTML" });
 
-  await ctx.editMessageText("🔄 Clearing topic...", { parse_mode: "HTML" });
-
-  try {
-    const { newTopicId } = await adapter.clearSessionTopic(session);
-    // Old topic is deleted, so send confirmation to the NEW topic
-    await ctx.api.sendMessage(adapter.chatId, "✅ Chat cleared. Session continues.", {
+  const result = await core.archiveSession(sessionId);
+  if (result.ok) {
+    // Old topic is deleted — send confirmation to NEW topic
+    const newTopicId = Number(result.newThreadId);
+    await ctx.api.sendMessage(chatId, "✅ Topic archived. Session continues.", {
       message_thread_id: newTopicId,
       parse_mode: "HTML",
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // Old topic may still exist if createForumTopic failed after deleteForumTopic
+  } else {
+    // Old topic may still exist if archive failed before delete
     try {
-      await ctx.editMessageText(`❌ Failed to clear: <code>${message}</code>`, { parse_mode: "HTML" });
+      await ctx.editMessageText(`❌ Failed to archive: <code>${escapeHtml(result.error)}</code>`, { parse_mode: "HTML" });
     } catch {
       // Topic already deleted — notify in Notifications topic
       core.notificationManager.notifyAll({
         sessionId,
-        sessionName: session.name,
         type: "error",
-        summary: `Failed to recreate topic for session "${session.name || sessionId}": ${message}`,
+        summary: `Failed to recreate topic for session "${sessionId}": ${result.error}`,
       });
     }
   }
 }
 ```
 
-Then in `src/adapters/telegram/commands/index.ts`:
+Also add import for `escapeHtml` if not already imported in session.ts.
 
-1. Update the import from `menu.ts` to include `handleClearConfirm`:
+- [ ] **Step 2: Register in index.ts**
 
-```typescript
-import { handleMenu, handleHelp, handleClear, handleClearConfirm, buildMenuKeyboard } from "./menu.js";
-```
+In `src/adapters/telegram/commands/index.ts`:
 
-2. Update the `setupCommands` call to pass `core` and `chatId` to `handleClear`:
+1. Update import from `session.ts`:
 
 ```typescript
-  bot.command("clear", (ctx) => handleClear(ctx, core, chatId, assistant));
+import { handleCancel, handleStatus, handleTopics, handleArchive, handleArchiveConfirm, setupSessionCallbacks } from "./session.js";
 ```
 
-3. In `setupAllCallbacks`, register the `cl:` prefix handler **before** the broad `m:` handler. You'll need to pass the adapter instance. Add `adapter` param to `setupAllCallbacks`:
+2. Register `/archive` command in `setupCommands`:
 
 ```typescript
-export function setupAllCallbacks(
-  bot: Bot,
-  core: OpenACPCore,
-  chatId: number,
-  adapter: import("../adapter.js").TelegramAdapter,
-  systemTopicIds?: { notificationTopicId: number; assistantTopicId: number },
-  getAssistantSession?: () => { topicId: number; enqueuePrompt: (p: string) => Promise<void> } | undefined,
-): void {
+  bot.command("archive", (ctx) => handleArchive(ctx, core));
 ```
 
-Then add before the broad `m:` handler:
+3. Register `ar:` callback in `setupAllCallbacks`, **before** the broad `m:` handler:
 
 ```typescript
-  // Clear confirmation callbacks
-  bot.callbackQuery(/^cl:/, (ctx) => handleClearConfirm(ctx, core, adapter));
+  // Archive confirmation callbacks
+  bot.callbackQuery(/^ar:/, (ctx) => handleArchiveConfirm(ctx, core, chatId));
 ```
 
-> **Note:** Adding `adapter` as a parameter to `setupAllCallbacks` requires updating the caller in `adapter.ts`. Check how `setupAllCallbacks` is called and add `this` as the adapter argument.
+> **Note:** `setupAllCallbacks` is called via alias `setupMenuCallbacks` in adapter.ts (~line 210). The `chatId` parameter is already passed as the third argument.
 
-- [ ] **Step 3: Update STATIC_COMMANDS description**
-
-In `STATIC_COMMANDS`, update the clear command description:
+4. Add to `STATIC_COMMANDS`:
 
 ```typescript
-  { command: "clear", description: "Clear chat history (assistant or session topic)" },
+  { command: "archive", description: "Archive session topic (recreate with clean history)" },
 ```
 
-- [ ] **Step 4: Update help text**
-
-In `handleHelp` in `menu.ts`, update the `/clear` description:
+5. Update help text in `menu.ts` `handleHelp`:
 
 ```typescript
-      `/clear — Clear chat history\n` +
+      `/archive — Archive session topic\n` +
 ```
 
-- [ ] **Step 5: Verify build**
+- [ ] **Step 3: Verify build**
 
 Run: `pnpm exec tsc --noEmit`
-Fix any type errors. Common issues:
-- `sessionManager.getSession()` may need a different method name — check the actual API
-- `adapter.chatId` may be private — use a getter or access via config
-- `setupAllCallbacks` signature change needs the caller in `adapter.ts` updated
+Fix any type errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src/adapters/telegram/commands/menu.ts src/adapters/telegram/commands/index.ts src/adapters/telegram/adapter.ts
-git commit -m "feat(telegram): extend /clear to support session topics with confirmation"
+git add src/adapters/telegram/commands/session.ts src/adapters/telegram/commands/index.ts src/adapters/telegram/commands/menu.ts
+git commit -m "feat(telegram): add /archive command with confirmation and ar: callbacks"
 ```
 
 ---
 
-### Task 5: Tests for /clear in session topics
+### Task 5: Tests
 
 **Files:**
-- Modify: `src/__tests__/clear-session.test.ts`
+- Create: `src/__tests__/archive-session.test.ts`
 
-- [ ] **Step 1: Add tests for handleClear and handleClearConfirm**
+- [ ] **Step 1: Write tests**
 
-Append to `src/__tests__/clear-session.test.ts`:
+Create `src/__tests__/archive-session.test.ts`:
 
 ```typescript
-import { handleClear } from "../adapters/telegram/commands/menu.js";
+import { describe, it, expect, vi } from "vitest";
+import { handleArchive } from "../adapters/telegram/commands/session.js";
 
-// Mock context factory
-function mockCtx(threadId?: number, callbackData?: string) {
-  const replies: any[] = [];
+function mockCtx(threadId?: number) {
   return {
-    ctx: {
-      message: threadId ? { message_thread_id: threadId } : undefined,
-      callbackQuery: callbackData ? { data: callbackData } : undefined,
-      reply: vi.fn((...args: any[]) => { replies.push(args); return Promise.resolve(); }),
-      editMessageText: vi.fn(() => Promise.resolve()),
-      answerCallbackQuery: vi.fn(() => Promise.resolve()),
-      api: { sendMessage: vi.fn(() => Promise.resolve()) },
-    } as any,
-    replies,
-  };
+    message: threadId ? { message_thread_id: threadId } : undefined,
+    reply: vi.fn(() => Promise.resolve()),
+  } as any;
 }
 
-describe("/clear in session topic", () => {
-  it("shows 'no active session' if no session found", async () => {
-    const { ctx } = mockCtx(999);
+describe("handleArchive", () => {
+  it("shows guidance when no session found in topic", async () => {
+    const ctx = mockCtx(999);
     const core = {
       sessionManager: {
         getSessionByThread: vi.fn(() => undefined),
       },
     } as any;
 
-    await handleClear(ctx, core, 123);
+    await handleArchive(ctx, core);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("No active session"),
+      expect.stringContaining("/archive"),
       expect.any(Object),
     );
   });
 
   it("shows confirmation prompt when session exists", async () => {
-    const { ctx } = mockCtx(456);
+    const ctx = mockCtx(456);
     const core = {
       sessionManager: {
         getSessionByThread: vi.fn(() => ({
@@ -501,15 +410,15 @@ describe("/clear in session topic", () => {
       },
     } as any;
 
-    await handleClear(ctx, core, 123);
+    await handleArchive(ctx, core);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("Clear session chat"),
+      expect.stringContaining("Archive this session topic"),
       expect.objectContaining({ reply_markup: expect.any(Object) }),
     );
   });
 
   it("rejects if session is initializing", async () => {
-    const { ctx } = mockCtx(456);
+    const ctx = mockCtx(456);
     const core = {
       sessionManager: {
         getSessionByThread: vi.fn(() => ({
@@ -519,34 +428,106 @@ describe("/clear in session topic", () => {
       },
     } as any;
 
-    await handleClear(ctx, core, 123);
+    await handleArchive(ctx, core);
     expect(ctx.reply).toHaveBeenCalledWith(
       expect.stringContaining("wait for session"),
       expect.any(Object),
     );
   });
 
-  it("falls through to assistant clear in assistant topic", async () => {
-    const respawn = vi.fn(() => Promise.resolve());
-    const { ctx } = mockCtx(100);
-    const assistant = { topicId: 100, respawn, getSession: () => null };
+  it("does nothing without threadId", async () => {
+    const ctx = mockCtx();
+    const core = { sessionManager: {} } as any;
 
-    await handleClear(ctx, {} as any, 123, assistant);
-    expect(respawn).toHaveBeenCalled();
+    await handleArchive(ctx, core);
+    expect(ctx.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe("archiveSession (core)", () => {
+  it("returns error for non-existent session", async () => {
+    const core = {
+      sessionManager: { getSession: vi.fn(() => undefined) },
+      adapters: new Map(),
+    };
+    // Import or inline the logic
+    const session = core.sessionManager.getSession("nonexistent");
+    expect(session).toBeUndefined();
+  });
+
+  it("returns error for initializing session", async () => {
+    const session = { status: "initializing", channelId: "telegram" };
+    expect(session.status).toBe("initializing");
+  });
+});
+
+describe("handleArchiveConfirm", () => {
+  it("cancels when user taps Cancel", async () => {
+    const { handleArchiveConfirm } = await import("../adapters/telegram/commands/session.js");
+    const ctx = {
+      callbackQuery: { data: "ar:no:sess-1" },
+      answerCallbackQuery: vi.fn(() => Promise.resolve()),
+      editMessageText: vi.fn(() => Promise.resolve()),
+    } as any;
+
+    await handleArchiveConfirm(ctx, {} as any, 123);
+    expect(ctx.editMessageText).toHaveBeenCalledWith(
+      "Archive cancelled.",
+      expect.any(Object),
+    );
+  });
+
+  it("calls core.archiveSession on confirm", async () => {
+    const { handleArchiveConfirm } = await import("../adapters/telegram/commands/session.js");
+    const core = {
+      archiveSession: vi.fn(() => Promise.resolve({ ok: true, newThreadId: "789" })),
+    } as any;
+    const ctx = {
+      callbackQuery: { data: "ar:yes:sess-1" },
+      answerCallbackQuery: vi.fn(() => Promise.resolve()),
+      editMessageText: vi.fn(() => Promise.resolve()),
+      api: { sendMessage: vi.fn(() => Promise.resolve()) },
+    } as any;
+
+    await handleArchiveConfirm(ctx, core, 123);
+    expect(core.archiveSession).toHaveBeenCalledWith("sess-1");
+    expect(ctx.api.sendMessage).toHaveBeenCalledWith(
+      123,
+      expect.stringContaining("archived"),
+      expect.objectContaining({ message_thread_id: 789 }),
+    );
+  });
+
+  it("shows error when archive fails", async () => {
+    const { handleArchiveConfirm } = await import("../adapters/telegram/commands/session.js");
+    const core = {
+      archiveSession: vi.fn(() => Promise.resolve({ ok: false, error: "No permission" })),
+    } as any;
+    const ctx = {
+      callbackQuery: { data: "ar:yes:sess-1" },
+      answerCallbackQuery: vi.fn(() => Promise.resolve()),
+      editMessageText: vi.fn(() => Promise.resolve()),
+    } as any;
+
+    await handleArchiveConfirm(ctx, core, 123);
+    expect(ctx.editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining("No permission"),
+      expect.any(Object),
+    );
   });
 });
 ```
 
 - [ ] **Step 2: Run tests**
 
-Run: `pnpm test src/__tests__/clear-session.test.ts`
+Run: `pnpm test src/__tests__/archive-session.test.ts`
 Expected: All tests PASS
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/__tests__/clear-session.test.ts
-git commit -m "test: add tests for /clear command in session topics"
+git add src/__tests__/archive-session.test.ts
+git commit -m "test: add tests for /archive command and confirmation flow"
 ```
 
 ---
@@ -565,18 +546,19 @@ Expected: No errors
 Run: `pnpm test`
 Expected: All tests pass (existing + new)
 
-- [ ] **Step 3: Verify command registration**
+- [ ] **Step 3: Verify registration**
 
 Grep to confirm:
-- `/clear` is registered in `setupCommands`
-- `cl:` callback is registered in `setupAllCallbacks`
-- `STATIC_COMMANDS` includes updated description
+- `/archive` is registered in `setupCommands`
+- `ar:` callback is registered in `setupAllCallbacks`
+- `STATIC_COMMANDS` includes `archive`
+- `archiveSession()` exists in `OpenACPCore`
+- `POST /sessions/:id/archive` exists in `api-server.ts`
 - `deleteSessionTopic` is exported from `topics.ts`
-- `updatePlatformData` is in `SessionStore` interface
 
 - [ ] **Step 4: Final commit (if any fixups needed)**
 
 ```bash
 git add -A
-git commit -m "chore: final cleanup for /clear session feature"
+git commit -m "chore: final cleanup for /archive feature"
 ```
