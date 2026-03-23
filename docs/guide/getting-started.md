@@ -81,6 +81,7 @@ Or configure daemon mode as default via `openacp config` → Run Mode.
 ## Next Steps
 
 - [Telegram Setup](telegram-setup.md) — detailed bot & group configuration
+- [Discord Setup](discord-setup.md) — detailed bot creation, permissions & server setup
 - [Usage Guide](usage.md) — CLI commands, API, sessions, workspaces
 - [Configuration Reference](configuration.md) — all config options including API and run mode
 - [Tunnel & File Viewer](tunnel.md) — shareable code viewer

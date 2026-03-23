@@ -426,6 +426,17 @@ export async function validateDiscordToken(token: string): Promise<
 export async function setupDiscord(): Promise<DiscordChannelConfig> {
   console.log('\n📱 Discord Setup\n');
 
+  console.log(`  ${c.bold}Quick setup:${c.reset}`);
+  console.log(dim('  1. Create app at https://discord.com/developers/applications'));
+  console.log(dim('  2. Go to Bot → Reset Token → copy it'));
+  console.log(dim('  3. Enable Message Content Intent (Bot → Privileged Intents)'));
+  console.log(dim('  4. OAuth2 → URL Generator → scopes: bot + applications.commands'));
+  console.log(dim('  5. Bot Permissions: Manage Channels, Send Messages, Manage Threads, Attach Files'));
+  console.log(dim('  6. Open generated URL → invite bot to your server'));
+  console.log('');
+  console.log(dim(`  📖 Detailed guide: https://github.com/Open-ACP/OpenACP/blob/main/docs/guide/discord-setup.md`));
+  console.log('');
+
   let botToken = '';
 
   while (true) {
