@@ -57,14 +57,13 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     this.queue = new SlackSendQueue(this.webClient);
     this.channelManager = new SlackChannelManager(this.queue, this.slackConfig);
 
-    // Resolve bot user ID
-    try {
-      const authResult = await this.webClient.auth.test();
-      this.botUserId = (authResult.user_id as string) ?? "";
-      log.info({ botUserId: this.botUserId }, "Slack bot authenticated");
-    } catch (err) {
-      log.warn({ err }, "Failed to resolve Slack bot user ID");
+    // Resolve bot user ID — required to filter bot's own messages (prevent infinite loop)
+    const authResult = await this.webClient.auth.test();
+    if (!authResult.user_id) {
+      throw new Error("Slack auth.test() did not return user_id — verify botToken is valid");
     }
+    this.botUserId = authResult.user_id as string;
+    log.info({ botUserId: this.botUserId }, "Slack bot authenticated");
 
     // Permission handler — resolve permission gate when user clicks a button
     this.permissionHandler = new SlackPermissionHandler(
