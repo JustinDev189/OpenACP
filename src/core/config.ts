@@ -58,6 +58,18 @@ const TunnelSchema = z
 
 export type TunnelConfig = z.infer<typeof TunnelSchema>;
 
+const UsageSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    monthlyBudget: z.number().optional(),
+    warningThreshold: z.number().default(0.8),
+    currency: z.string().default("USD"),
+    retentionDays: z.number().default(90),
+  })
+  .default({});
+
+export type UsageConfig = z.infer<typeof UsageSchema>;
+
 export const ConfigSchema = z.object({
   channels: z.record(z.string(), BaseChannelSchema),
   agents: z.record(z.string(), AgentSchema).optional().default({}),
@@ -87,6 +99,7 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   tunnel: TunnelSchema,
+  usage: UsageSchema,
   integrations: z.record(z.string(), z.object({
     installed: z.boolean(),
     installedAt: z.string().optional(),
@@ -140,6 +153,7 @@ const DEFAULT_CONFIG = {
     storeTtlMinutes: 60,
     auth: { enabled: false },
   },
+  usage: {},
 };
 
 export class ConfigManager extends EventEmitter {

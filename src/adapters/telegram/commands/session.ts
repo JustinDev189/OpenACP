@@ -2,7 +2,7 @@ import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import type { OpenACPCore } from "../../../core/index.js";
 import type { Session } from "../../../core/session.js";
-import { escapeHtml } from "../formatting.js";
+import { escapeHtml, formatUsageReport } from "../formatting.js";
 import { createChildLogger } from "../../../core/log.js";
 import type { CommandsAssistantContext } from "../types.js";
 const log = createChildLogger({ module: "telegram-cmd-session" });
@@ -353,6 +353,35 @@ export function setupSessionCallbacks(
         break;
     }
   });
+}
+
+export async function handleUsage(ctx: Context, core: OpenACPCore): Promise<void> {
+  if (!core.usageStore) {
+    await ctx.reply("📊 Usage tracking is disabled.", { parse_mode: "HTML" });
+    return;
+  }
+
+  const rawMatch = (ctx as Context & { match: unknown }).match;
+  const period = typeof rawMatch === "string" ? rawMatch.trim().toLowerCase() : "";
+
+  let summaries: ReturnType<typeof core.usageStore.query>[];
+
+  if (period === "today" || period === "week" || period === "month") {
+    summaries = [core.usageStore.query(period)];
+  } else {
+    summaries = [
+      core.usageStore.query("month"),
+      core.usageStore.query("week"),
+      core.usageStore.query("today"),
+    ];
+  }
+
+  const budgetStatus = core.usageBudget
+    ? core.usageBudget.getStatus()
+    : { status: "ok" as const, used: 0, budget: 0, percent: 0 };
+
+  const text = formatUsageReport(summaries, budgetStatus);
+  await ctx.reply(text, { parse_mode: "HTML" });
 }
 
 export async function handleArchive(
