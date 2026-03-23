@@ -8,6 +8,7 @@ import { NotificationManager } from "./notification.js";
 import { ChannelAdapter } from "./channel.js";
 import { Session } from "./session.js";
 import { MessageTransformer } from "./message-transformer.js";
+import { FileService } from "./file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./session-store.js";
 import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
@@ -24,6 +25,7 @@ export class OpenACPCore {
   sessionManager: SessionManager;
   notificationManager: NotificationManager;
   messageTransformer: MessageTransformer;
+  fileService: FileService;
   adapters: Map<string, ChannelAdapter> = new Map();
   /** Set by main.ts — triggers graceful shutdown with restart exit code */
   requestRestart: (() => Promise<void>) | null = null;
@@ -48,6 +50,9 @@ export class OpenACPCore {
     this.messageTransformer = new MessageTransformer();
     this.eventBus = new EventBus();
     this.sessionManager.setEventBus(this.eventBus);
+    this.fileService = new FileService(
+      path.join(os.homedir(), ".openacp", "files"),
+    );
 
     // Hot-reload: handle config changes that need side effects
     this.configManager.on(
@@ -177,7 +182,7 @@ export class OpenACPCore {
     });
 
     // Forward to session
-    await session.enqueuePrompt(message.text);
+    await session.enqueuePrompt(message.text, message.attachments);
   }
 
   // --- Unified Session Creation Pipeline ---
@@ -543,6 +548,7 @@ export class OpenACPCore {
       notificationManager: this.notificationManager,
       sessionManager: this.sessionManager,
       eventBus: this.eventBus,
+      fileService: this.fileService,
     });
   }
 }

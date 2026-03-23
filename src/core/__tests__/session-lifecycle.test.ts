@@ -63,7 +63,7 @@ describe('Session - Lifecycle & Prompt Processing', () => {
 
       await session.enqueuePrompt('hello')
 
-      expect(agent.prompt).toHaveBeenCalledWith('hello')
+      expect(agent.prompt).toHaveBeenCalledWith('hello', undefined)
     })
 
     it('activates session on first user prompt from initializing', async () => {
