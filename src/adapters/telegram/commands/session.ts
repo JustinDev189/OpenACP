@@ -376,6 +376,11 @@ export async function handleArchive(
     return;
   }
 
+  if (session.status !== "active") {
+    await ctx.reply(`⚠️ Cannot archive — session is ${session.status}.`, { parse_mode: "HTML" });
+    return;
+  }
+
   await ctx.reply(
     "⚠️ <b>Archive this session topic?</b>\n\n" +
     "This will permanently delete all messages in this topic and create a fresh one.\n" +

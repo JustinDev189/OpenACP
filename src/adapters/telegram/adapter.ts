@@ -499,6 +499,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
     const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
+
+    // Drop messages while topic is being recreated (archive in progress)
+    if (session.archiving) return;
     const threadId = Number(session.threadId);
     if (!threadId || isNaN(threadId)) {
       log.warn({ sessionId, threadId: session.threadId }, "Session has no valid threadId, skipping message");
@@ -900,10 +903,13 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     // Strip existing 🔄 prefix to avoid stacking on repeated archives
     const rawName = (session.name || `Session ${session.id.slice(0, 6)}`).replace(/^🔄\s*/, "");
 
-    // 1. Finalize any pending draft
+    // 1. Set archiving flag — sendMessage will skip while this is true
+    session.archiving = true;
+
+    // 2. Finalize any pending draft
     await this.draftManager.finalize(session.id, this.assistantSession?.id);
 
-    // 2. Cleanup all trackers for old topic
+    // 3. Cleanup all trackers for old topic
     this.draftManager.cleanup(session.id);
     this.toolTracker.cleanup(session.id);
     await this.skillManager.cleanup(session.id);
@@ -913,15 +919,16 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       this.sessionTrackers.delete(session.id);
     }
 
-    // 3. Delete old topic
+    // 4. Delete old topic
     await deleteSessionTopic(this.bot, chatId, oldTopicId);
 
-    // 4. Create new topic — wrapped in try/catch for orphan recovery
+    // 5. Create new topic — wrapped in try/catch for orphan recovery
     let newTopicId: number;
     try {
       newTopicId = await createSessionTopic(this.bot, chatId, `🔄 ${rawName}`);
     } catch (createErr) {
       // Critical: old topic deleted but new one failed — session is orphaned
+      session.archiving = false;
       core.notificationManager.notifyAll({
         sessionId: session.id,
         sessionName: session.name,
@@ -931,15 +938,19 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       throw createErr;
     }
 
-    // 5. Rewire session to new topic
+    // 6. Rewire session to new topic
     session.threadId = String(newTopicId);
 
-    // 6. Persist via patchRecord — spread existing platform data to preserve skillMsgId etc.
+    // 7. Persist via patchRecord — spread existing platform data, explicitly delete old skillMsgId
     const existingRecord = core.sessionManager.getSessionRecord(session.id);
-    const existingPlatform = existingRecord?.platform ?? {};
+    const existingPlatform = { ...(existingRecord?.platform ?? {}) };
+    delete (existingPlatform as Record<string, unknown>).skillMsgId;
     await core.sessionManager.patchRecord(session.id, {
-      platform: { ...existingPlatform, topicId: newTopicId, skillMsgId: undefined },
+      platform: { ...existingPlatform, topicId: newTopicId },
     });
+
+    // 8. Clear archiving flag
+    session.archiving = false;
 
     return { newThreadId: String(newTopicId) };
   }

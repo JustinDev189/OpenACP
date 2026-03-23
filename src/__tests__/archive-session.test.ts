@@ -60,6 +60,24 @@ describe("handleArchive", () => {
     );
   });
 
+  it("rejects finished session with specific message", async () => {
+    const ctx = mockCtx(456);
+    const core = {
+      sessionManager: {
+        getSessionByThread: vi.fn(() => ({
+          id: "sess-1",
+          status: "finished",
+        })),
+      },
+    } as any;
+
+    await handleArchive(ctx, core);
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("session is finished"),
+      expect.any(Object),
+    );
+  });
+
   it("does nothing without threadId", async () => {
     const ctx = mockCtx();
     const core = { sessionManager: {} } as any;
