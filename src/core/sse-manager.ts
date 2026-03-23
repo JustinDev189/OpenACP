@@ -14,7 +14,10 @@ export class SSEManager {
   private sseConnections = new Set<http.ServerResponse>();
   private sseCleanupHandlers = new Map<http.ServerResponse, () => void>();
   private healthInterval?: ReturnType<typeof setInterval>;
-  private boundEventNames: Array<keyof EventBusEvents> = [];
+  private boundHandlers: Array<{
+    event: keyof EventBusEvents;
+    handler: (data: unknown) => void;
+  }> = [];
 
   constructor(
     private eventBus: EventBus | undefined,
@@ -38,7 +41,7 @@ export class SSEManager {
         this.broadcast(eventName, data);
       };
       this.eventBus.on(eventName, handler);
-      this.boundEventNames.push(eventName);
+      this.boundHandlers.push({ event: eventName, handler });
     }
 
     // Health heartbeat every 30s
@@ -95,20 +98,24 @@ export class SSEManager {
         const eventData = data as { sessionId: string };
         if (eventData.sessionId !== filter) continue;
       }
-      res.write(payload);
+      try {
+        if (res.writable) res.write(payload);
+      } catch {
+        /* connection closed */
+      }
     }
   }
 
   stop(): void {
     if (this.healthInterval) clearInterval(this.healthInterval);
 
-    // Remove event bus listeners
+    // Remove only our own event bus listeners
     if (this.eventBus) {
-      for (const event of this.boundEventNames) {
-        this.eventBus.removeAllListeners(event);
+      for (const { event, handler } of this.boundHandlers) {
+        this.eventBus.off(event, handler);
       }
     }
-    this.boundEventNames = [];
+    this.boundHandlers = [];
 
     // Copy to avoid modifying Map while iterating
     const entries = [...this.sseCleanupHandlers];

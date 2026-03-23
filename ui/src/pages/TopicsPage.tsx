@@ -65,6 +65,8 @@ export function TopicsPage() {
         statuses: ["finished", "error"],
       });
       await fetchTopics();
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setCleaning(false);
     }
