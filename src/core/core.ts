@@ -10,7 +10,10 @@ import { Session } from "./session.js";
 import { MessageTransformer } from "./message-transformer.js";
 import { FileService } from "./file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./session-store.js";
-import type { IncomingMessage } from "./types.js";
+import { UsageStore } from "./usage-store.js";
+import { UsageBudget } from "./usage-budget.js";
+import type { IncomingMessage, UsageRecord } from "./types.js";
+import { nanoid } from "nanoid";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
 import { getAgentCapabilities } from "./agent-registry.js";
 import { AgentCatalog } from "./agent-catalog.js";
@@ -31,6 +34,8 @@ export class OpenACPCore {
   private _tunnelService?: TunnelService;
   private sessionStore: SessionStore | null = null;
   private resumeLocks: Map<string, Promise<Session | null>> = new Map();
+  readonly usageStore: UsageStore | null = null;
+  readonly usageBudget: UsageBudget | null = null;
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -45,6 +50,15 @@ export class OpenACPCore {
     );
     this.sessionManager = new SessionManager(this.sessionStore);
     this.notificationManager = new NotificationManager(this.adapters);
+
+    // Usage tracking
+    const usageConfig = config.usage;
+    if (usageConfig.enabled) {
+      const usagePath = path.join(os.homedir(), ".openacp", "usage.json");
+      this.usageStore = new UsageStore(usagePath, usageConfig.retentionDays);
+      this.usageBudget = new UsageBudget(this.usageStore, usageConfig);
+    }
+
     this.messageTransformer = new MessageTransformer();
     this.fileService = new FileService(path.join(os.homedir(), ".openacp", "files"));
 
@@ -99,6 +113,31 @@ export class OpenACPCore {
     for (const adapter of this.adapters.values()) {
       await adapter.stop();
     }
+
+    // 4. Cleanup usage store
+    if (this.usageStore) {
+      this.usageStore.destroy();
+    }
+  }
+
+  // --- Archive ---
+
+  async archiveSession(sessionId: string): Promise<{ ok: true; newThreadId: string } | { ok: false; error: string }> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return { ok: false, error: "Session not found" };
+    if (session.status === "initializing") return { ok: false, error: "Session is still initializing" };
+    if (session.status !== "active") return { ok: false, error: `Session is ${session.status}` };
+
+    const adapter = this.adapters.get(session.channelId);
+    if (!adapter) return { ok: false, error: "Adapter not found for session" };
+
+    try {
+      const result = await adapter.archiveSessionTopic(session.id);
+      if (!result) return { ok: false, error: "Adapter does not support archiving" };
+      return { ok: true, newThreadId: result.newThreadId };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   }
 
   // --- Message Routing ---
@@ -115,10 +154,12 @@ export class OpenACPCore {
     );
 
     // Security: check allowed user IDs
+    // Both Telegram (numeric) and Discord (snowflake string) IDs are compared as strings
     if (config.security.allowedUserIds.length > 0) {
-      if (!config.security.allowedUserIds.includes(message.userId)) {
+      const userId = String(message.userId)
+      if (!config.security.allowedUserIds.includes(userId)) {
         log.warn(
-          { userId: message.userId },
+          { userId },
           "Rejected message from unauthorized user",
         );
         return;
@@ -229,6 +270,51 @@ export class OpenACPCore {
       bridge.connect();
     }
 
+    // 5b. Wire usage tracking (independent of adapter)
+    if (this.usageStore) {
+      session.on("agent_event", (event: import("./types.js").AgentEvent) => {
+        if (event.type !== "usage") return;
+        const record: UsageRecord = {
+          id: nanoid(),
+          sessionId: session.id,
+          agentName: session.agentName,
+          tokensUsed: event.tokensUsed ?? 0,
+          contextSize: event.contextSize ?? 0,
+          cost: event.cost,
+          timestamp: new Date().toISOString(),
+        };
+        this.usageStore!.append(record);
+
+        if (this.usageBudget) {
+          const result = this.usageBudget.check();
+          if (result.message) {
+            this.notificationManager.notifyAll({
+              sessionId: session.id,
+              sessionName: session.name,
+              type: "budget_warning",
+              summary: result.message,
+            });
+          }
+        }
+      });
+    }
+
+    // 5c. Clean up user tunnels when session ends
+    session.on("status_change", (_from, to) => {
+      if ((to === "finished" || to === "cancelled") && this._tunnelService) {
+        this._tunnelService.stopBySession(session.id).then(stopped => {
+          for (const entry of stopped) {
+            this.notificationManager.notifyAll({
+              sessionId: session.id,
+              sessionName: session.name,
+              type: "completed",
+              summary: `Tunnel stopped: port ${entry.port}${entry.label ? ` (${entry.label})` : ''} — session ended`,
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+    });
+
     // 6. Persist initial record
     // Preserve existing platform data (e.g. topicId) when resuming an existing session
     const existingRecord = this.sessionStore?.get(session.id);
@@ -236,7 +322,11 @@ export class OpenACPCore {
       ...(existingRecord?.platform ?? {}),
     };
     if (session.threadId) {
-      platform.topicId = Number(session.threadId);
+      if (params.channelId === 'telegram') {
+        platform.topicId = Number(session.threadId);
+      } else {
+        platform.threadId = session.threadId;
+      }
     }
     await this.sessionManager.patchRecord(session.id, {
       sessionId: session.id,
@@ -490,5 +580,4 @@ export class OpenACPCore {
       fileService: this.fileService,
     });
   }
-
 }

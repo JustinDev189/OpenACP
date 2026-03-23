@@ -50,12 +50,25 @@ const TunnelSchema = z
     port: z.number().default(3100),
     provider: z.enum(["cloudflare", "ngrok", "bore", "tailscale"]).default("cloudflare"),
     options: z.record(z.string(), z.unknown()).default({}),
+    maxUserTunnels: z.number().default(5),
     storeTtlMinutes: z.number().default(60),
     auth: TunnelAuthSchema,
   })
   .default({});
 
 export type TunnelConfig = z.infer<typeof TunnelSchema>;
+
+const UsageSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    monthlyBudget: z.number().optional(),
+    warningThreshold: z.number().default(0.8),
+    currency: z.string().default("USD"),
+    retentionDays: z.number().default(90),
+  })
+  .default({});
+
+export type UsageConfig = z.infer<typeof UsageSchema>;
 
 export const ConfigSchema = z.object({
   channels: z.record(z.string(), BaseChannelSchema),
@@ -86,6 +99,7 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   tunnel: TunnelSchema,
+  usage: UsageSchema,
   integrations: z.record(z.string(), z.object({
     installed: z.boolean(),
     installedAt: z.string().optional(),
@@ -110,6 +124,14 @@ const DEFAULT_CONFIG = {
       notificationTopicId: null,
       assistantTopicId: null,
     },
+    discord: {
+      enabled: false,
+      botToken: "YOUR_DISCORD_BOT_TOKEN_HERE",
+      guildId: "",
+      forumChannelId: null,
+      notificationChannelId: null,
+      assistantThreadId: null,
+    },
   },
   agents: {
     claude: { command: "claude-agent-acp", args: [], env: {} },
@@ -131,6 +153,7 @@ const DEFAULT_CONFIG = {
     storeTtlMinutes: 60,
     auth: { enabled: false },
   },
+  usage: {},
 };
 
 export class ConfigManager extends EventEmitter {
@@ -156,7 +179,7 @@ export class ConfigManager extends EventEmitter {
       );
       log.info({ configPath: this.configPath }, "Config created");
       log.info(
-        "Please edit it with your Telegram bot token and chat ID, then restart.",
+        "Please edit it with your channel credentials (Telegram bot token, Discord bot token, etc.), then restart.",
       );
       process.exit(1);
     }
@@ -248,6 +271,8 @@ export class ConfigManager extends EventEmitter {
     const overrides: [string, string[]][] = [
       ["OPENACP_TELEGRAM_BOT_TOKEN", ["channels", "telegram", "botToken"]],
       ["OPENACP_TELEGRAM_CHAT_ID", ["channels", "telegram", "chatId"]],
+      ["OPENACP_DISCORD_BOT_TOKEN", ["channels", "discord", "botToken"]],
+      ["OPENACP_DISCORD_GUILD_ID", ["channels", "discord", "guildId"]],
       ["OPENACP_DEFAULT_AGENT", ["defaultAgent"]],
       ["OPENACP_RUN_MODE", ["runMode"]],
       ["OPENACP_API_PORT", ["api", "port"]],
