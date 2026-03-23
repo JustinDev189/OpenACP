@@ -1,0 +1,16 @@
+import type { Session } from '../../core/session.js'
+
+export interface DiscordChannelConfig {
+  enabled: boolean
+  botToken: string
+  guildId: string
+  forumChannelId: string | null
+  notificationChannelId: string | null
+  assistantThreadId: string | null
+}
+
+export interface CommandsAssistantContext {
+  threadId: string
+  getSession: () => Session | null
+  respawn: () => Promise<void>
+}
