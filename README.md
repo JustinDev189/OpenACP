@@ -207,7 +207,7 @@ Sessions are not locked after transfer — you can continue from either side.
 
 - **Phase 1** — Core + Telegram + ACP agents
 - **Phase 2** — Tunnel/file viewer, session persistence, logging, plugin system
-- **Phase 3** — Agent skills as commands, Discord adapter ✅, Web UI
+- **Phase 3** — Agent skills as commands, Discord adapter 🚧, Web UI
 - **Phase 4** — Voice control, file/image sharing
 - **Phase 5** — WhatsApp, agent chaining, plugin marketplace
 

@@ -199,6 +199,11 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
         const userId = message.author.id
         let text = message.content
 
+        log.debug(
+          { threadId, userId, text: text.slice(0, 50), attachmentCount: message.attachments.size },
+          '[DiscordAdapter] messageCreate received',
+        )
+
         // Ignore messages with no text and no attachments
         if (!text && message.attachments.size === 0) return
 
@@ -207,6 +212,17 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
           this.core.sessionManager.getSessionByThread('discord', threadId)?.id ?? 'unknown'
 
         // Process attachments
+        if (message.attachments.size > 0) {
+          log.info(
+            {
+              sessionId,
+              attachments: message.attachments.map((a) => ({
+                name: a.name, size: a.size, contentType: a.contentType, url: a.url?.slice(0, 80),
+              })),
+            },
+            '[discord-media] Processing incoming attachments',
+          )
+        }
         const attachments = await this.processIncomingAttachments(message, sessionId)
 
         // Generate fallback text if message has attachments but no text
@@ -340,10 +356,18 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
       }),
     )
 
-    return results
+    const rejected = results.filter((r) => r.status === 'rejected')
+    if (rejected.length > 0) {
+      log.warn({ rejected: rejected.map((r) => (r as PromiseRejectedResult).reason) }, '[discord-media] Some attachments failed')
+    }
+
+    const saved = results
       .filter((r): r is PromiseFulfilledResult<Attachment | null> => r.status === 'fulfilled')
       .map((r) => r.value)
       .filter((att): att is Attachment => att !== null)
+
+    log.info({ count: saved.length, files: saved.map((a) => a.fileName) }, '[discord-media] Attachments processed')
+    return saved
   }
 
   // ─── Helper: resolve thread ───────────────────────────────────────────────
@@ -636,6 +660,10 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
   getForumChannel(): ForumChannel | TextChannel {
     return this.forumChannel
+  }
+
+  getGuild(): Guild {
+    return this.guild
   }
 
   getGuildId(): string {

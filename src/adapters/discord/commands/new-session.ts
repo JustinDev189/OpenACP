@@ -6,7 +6,7 @@ import {
 import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
 import { log } from '../../../core/log.js'
 import { buildDangerousModeKeyboard } from './admin.js'
-import { createSessionThread } from '../forums.js'
+import { createSessionThread, deleteSessionThread } from '../forums.js'
 
 // TODO: Replace `any` with DiscordAdapter once Task 12 is implemented
 
@@ -98,7 +98,7 @@ export async function executeNewSession(
 
   log.info({ agentName: resolvedAgent, workspace }, '[discord-new-session] Creating session')
 
-  const forumChannel = adapter.forumChannel
+  const forumChannel = adapter.getForumChannel()
   if (!forumChannel) {
     const msg = '❌ Forum channel not configured. Please run setup first.'
     if ((interaction as any).deferred || (interaction as any).replied) {
@@ -121,7 +121,7 @@ export async function executeNewSession(
 
     // Patch platform record with Discord thread ID
     await adapter.core.sessionManager.patchRecord(session.id, {
-      platform: { topicId: thread.id },
+      platform: { threadId: thread.id },
     })
 
     // Send welcome message in the new thread
@@ -136,7 +136,7 @@ export async function executeNewSession(
     })
 
     // Reply to the interaction with a link to the thread
-    const replyMsg = `✅ Session created → [Open thread](https://discord.com/channels/${adapter.guild.id}/${thread.id})`
+    const replyMsg = `✅ Session created → [Open thread](https://discord.com/channels/${adapter.getGuildId()}/${thread.id})`
     if ((interaction as any).deferred || (interaction as any).replied) {
       await interaction.editReply(replyMsg)
     } else {
@@ -148,9 +148,9 @@ export async function executeNewSession(
   } catch (err) {
     log.error({ err }, '[discord-new-session] Session creation failed')
 
-    // Clean up orphaned thread on failure
+    // Clean up orphaned thread on failure (archive+lock instead of permanent delete)
     if (thread) {
-      try { await thread.delete() } catch { /* ignore */ }
+      try { await deleteSessionThread(adapter.getGuild(), thread.id) } catch { /* ignore */ }
     }
 
     const errMsg = `❌ ${err instanceof Error ? err.message : String(err)}`

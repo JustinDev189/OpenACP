@@ -300,12 +300,13 @@ async function runCleanup(
         }
       }
 
-      const topicId = (record.platform as { topicId?: string | number })?.topicId
-      if (topicId && adapter.guild) {
+      const platform = record.platform as { topicId?: string | number; threadId?: string } | undefined
+      const threadId = platform?.threadId ?? (platform?.topicId != null ? String(platform.topicId) : undefined)
+      if (threadId) {
         try {
-          await deleteSessionThread(adapter.guild, String(topicId))
+          await deleteSessionThread(adapter.getGuild(), threadId)
         } catch (err) {
-          log.warn({ err, sessionId: record.sessionId, topicId }, '[discord-session] Failed to delete thread during cleanup')
+          log.warn({ err, sessionId: record.sessionId, threadId }, '[discord-session] Failed to delete thread during cleanup')
         }
       }
       await adapter.core.sessionManager.removeRecord(record.sessionId)
