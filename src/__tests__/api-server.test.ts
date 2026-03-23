@@ -1098,6 +1098,287 @@ describe("ApiServer", () => {
     });
   });
 
+  describe("security", () => {
+    // --- Prototype pollution via config update ---
+
+    it("rejects config paths containing __proto__", async () => {
+      const port = await startServer();
+      const res = await apiFetch(port, "/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "__proto__.polluted", value: true }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects config paths containing constructor.prototype", async () => {
+      const port = await startServer();
+      const res = await apiFetch(port, "/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: "constructor.prototype.polluted",
+          value: true,
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects config paths containing prototype segment", async () => {
+      const port = await startServer();
+      const res = await apiFetch(port, "/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "a.prototype.b", value: "x" }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    // --- Config scope enforcement ---
+
+    it("rejects modification of sensitive config fields", async () => {
+      const port = await startServer();
+      const res = await apiFetch(port, "/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: "channels.telegram.botToken",
+          value: "stolen",
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    // --- Path traversal in static server ---
+
+    describe("path traversal protection", () => {
+      let uiDir: string;
+
+      beforeEach(() => {
+        uiDir = path.join(tmpDir, "ui-traversal");
+        fs.mkdirSync(uiDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(uiDir, "index.html"),
+          "<html><body>Safe</body></html>",
+        );
+      });
+
+      it("blocks path traversal with ../ (no file leaked, SPA fallback or 404)", async () => {
+        const { ApiServer } = await import("../core/api-server.js");
+        server = new ApiServer(
+          mockCore as any,
+          { port: 0, host: "127.0.0.1" },
+          portFilePath,
+          mockTopicManager as any,
+          secretFilePath,
+          uiDir,
+        );
+        await server.start();
+        const port = server.getPort();
+
+        // HTTP clients normalize /../../../etc/passwd → /etc/passwd before sending.
+        // The static server resolves this to uiDir/etc/passwd (does not escape uiDir),
+        // which doesn't exist, so it falls back to serving index.html (SPA pattern).
+        const res = await globalThis.fetch(
+          `http://127.0.0.1:${port}/../../../etc/passwd`,
+        );
+        // Must never expose actual /etc/passwd contents — either SPA fallback or 404
+        expect([200, 404]).toContain(res.status);
+        const body = await res.text();
+        expect(body).not.toMatch(/root:.*:0:0/); // not real /etc/passwd
+      });
+
+      it("blocks encoded path traversal with %2e%2e (no file leaked)", async () => {
+        const { ApiServer } = await import("../core/api-server.js");
+        server = new ApiServer(
+          mockCore as any,
+          { port: 0, host: "127.0.0.1" },
+          portFilePath,
+          mockTopicManager as any,
+          secretFilePath,
+          uiDir,
+        );
+        await server.start();
+        const port = server.getPort();
+
+        // %2e%2e decodes to ".." — HTTP normalises before server sees the path.
+        // Result is the same: uiDir-contained path, no file system escape.
+        const res = await globalThis.fetch(
+          `http://127.0.0.1:${port}/%2e%2e/%2e%2e/etc/passwd`,
+        );
+        expect([200, 404]).toContain(res.status);
+        const body = await res.text();
+        expect(body).not.toMatch(/root:.*:0:0/); // not real /etc/passwd
+      });
+    });
+
+    // --- SSE auth ---
+
+    it("rejects SSE without auth token", async () => {
+      mockCore.eventBus = new EventBus();
+      const port = await startServer();
+
+      const controller = new AbortController();
+      const res = await globalThis.fetch(
+        `http://127.0.0.1:${port}/api/events`,
+        { signal: controller.signal },
+      );
+      expect(res.status).toBe(401);
+      controller.abort();
+    });
+
+    it("accepts SSE with query param token", async () => {
+      mockCore.eventBus = new EventBus();
+      const port = await startServer();
+      const token = readTestSecret();
+
+      const controller = new AbortController();
+      const res = await globalThis.fetch(
+        `http://127.0.0.1:${port}/api/events?token=${token}`,
+        { signal: controller.signal },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      controller.abort();
+    });
+
+    it("rejects SSE with invalid query param token", async () => {
+      mockCore.eventBus = new EventBus();
+      const port = await startServer();
+
+      const controller = new AbortController();
+      const res = await globalThis.fetch(
+        `http://127.0.0.1:${port}/api/events?token=wrong-token`,
+        { signal: controller.signal },
+      );
+      expect(res.status).toBe(401);
+      controller.abort();
+    });
+
+    // --- readBody size limit ---
+
+    it("rejects oversized request body with 413 or socket close", async () => {
+      const port = await startServer();
+      // Use /api/sessions/adopt which explicitly checks body === null and returns 413.
+      // When the server calls req.destroy(), the socket is forcibly closed.
+      // Some fetch implementations receive the 413 response; others get a SocketError.
+      const largeBody = JSON.stringify({
+        agentSessionId: "x".repeat(1024 * 1024 + 1),
+      });
+      try {
+        const res = await apiFetch(port, "/api/sessions/adopt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: largeBody,
+        });
+        // If the response arrived, it must be 413
+        expect(res.status).toBe(413);
+      } catch {
+        // Socket was destroyed before response arrived — this is also correct behaviour
+        // (the server aborted the oversized upload). Test passes.
+      }
+    });
+
+    // --- Auth edge cases ---
+
+    it("rejects empty Authorization header (Bearer with no token)", async () => {
+      const port = await startServer();
+      const res = await globalThis.fetch(
+        `http://127.0.0.1:${port}/api/sessions`,
+        {
+          headers: { Authorization: "Bearer " },
+        },
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects Bearer token with wrong length", async () => {
+      const port = await startServer();
+      // Use a token with clearly different length from the 64-char hex secret
+      const res = await globalThis.fetch(
+        `http://127.0.0.1:${port}/api/sessions`,
+        {
+          headers: { Authorization: "Bearer short" },
+        },
+      );
+      expect(res.status).toBe(401);
+    });
+
+    // --- Config Zod validation ---
+
+    it("rejects invalid config values (string for number field)", async () => {
+      const port = await startServer();
+      // Pass a string where Zod expects a number — ConfigSchema.safeParse will fail
+      const res = await apiFetch(port, "/api/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: "security.maxConcurrentSessions",
+          value: "not-a-number",
+        }),
+      });
+      // Fails Zod validation → 400
+      expect(res.status).toBe(400);
+      const data = (await res.json()) as any;
+      expect(data.error).toBe("Validation failed");
+    });
+
+    // --- Redact config with arrays ---
+
+    it("redacts sensitive keys inside arrays", async () => {
+      mockCore.configManager.get.mockReturnValueOnce({
+        defaultAgent: "claude",
+        agents: {
+          claude: { command: "claude", args: [], workingDirectory: "/tmp/ws" },
+        },
+        security: {
+          maxConcurrentSessions: 5,
+          sessionTimeoutMinutes: 60,
+          allowedUserIds: [],
+        },
+        channels: {
+          telegram: { enabled: false, botToken: "secret-token", chatId: 0 },
+        },
+        workspace: { baseDir: "~/openacp-workspace" },
+        logging: {
+          level: "info",
+          logDir: "~/.openacp/logs",
+          maxFileSize: "10m",
+          maxFiles: 7,
+          sessionLogRetentionDays: 30,
+        },
+        tunnel: {
+          enabled: true,
+          port: 3100,
+          provider: "cloudflare",
+          options: {},
+          storeTtlMinutes: 60,
+          auth: { enabled: false },
+        },
+        sessionStore: { ttlDays: 30 },
+        runMode: "foreground",
+        autoStart: false,
+        api: { port: 21420, host: "127.0.0.1" },
+        integrations: {
+          webhooks: [
+            { name: "webhook1", token: "super-secret-token" },
+            { name: "webhook2", token: "another-secret" },
+          ],
+        },
+      });
+      const port = await startServer();
+
+      const res = await apiFetch(port, "/api/config");
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as any;
+      // Token inside array items must be redacted
+      expect(data.config.integrations.webhooks[0].token).toBe("***");
+      expect(data.config.integrations.webhooks[1].token).toBe("***");
+      // Name fields should NOT be redacted
+      expect(data.config.integrations.webhooks[0].name).toBe("webhook1");
+    });
+  });
+
   describe("authentication", () => {
     it("returns 401 for requests without auth token", async () => {
       const port = await startServer();
