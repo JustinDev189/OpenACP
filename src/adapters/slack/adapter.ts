@@ -19,6 +19,7 @@ import { SlackChannelManager } from "./channel-manager.js";
 import { SlackPermissionHandler } from "./permission-handler.js";
 import { SlackEventRouter } from "./event-router.js";
 import { SlackTextBuffer } from "./text-buffer.js";
+import { toSlug } from "./slug.js";
 
 export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
   private app!: App;
@@ -166,13 +167,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     const meta = this.sessions.get(sessionId);
     if (!meta) return;
 
-    const newSlug = newName
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, "")
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .slice(0, 60);
+    const newSlug = toSlug(newName, this.slackConfig.channelPrefix ?? "openacp");
 
     try {
       await this.queue.enqueue("conversations.rename", {
