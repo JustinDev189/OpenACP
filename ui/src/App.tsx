@@ -4,6 +4,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { AgentsPage } from "./pages/AgentsPage";
 import { SessionsPage } from "./pages/SessionsPage";
 import { SessionDetailPage } from "./pages/SessionDetailPage";
+import { ConfigPage } from "./pages/ConfigPage";
+import { TopicsPage } from "./pages/TopicsPage";
 
 export function App() {
   return (
@@ -13,14 +15,8 @@ export function App() {
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/:id" element={<SessionDetailPage />} />
         <Route path="/agents" element={<AgentsPage />} />
-        <Route
-          path="/config"
-          element={<div className="text-xl">Config — coming soon</div>}
-        />
-        <Route
-          path="/topics"
-          element={<div className="text-xl">Topics — coming soon</div>}
-        />
+        <Route path="/config" element={<ConfigPage />} />
+        <Route path="/topics" element={<TopicsPage />} />
       </Route>
     </Routes>
   );
