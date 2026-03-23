@@ -60,6 +60,12 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
     this.sendQueue = new DiscordSendQueue()
     this.toolTracker = new ToolCallTracker(this.sendQueue)
     this.draftManager = new DraftManager(this.sendQueue)
+
+    // Wire discord.js rate limit events to send queue
+    this.client.rest.on('rateLimited', (info) => {
+      log.warn({ route: info.route, timeToReset: info.timeToReset }, '[DiscordAdapter] Rate limited')
+      this.sendQueue.onRateLimited()
+    })
   }
 
   // ─── start ────────────────────────────────────────────────────────────────

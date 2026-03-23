@@ -112,10 +112,12 @@ export class OpenACPCore {
     );
 
     // Security: check allowed user IDs
+    // Both Telegram (numeric) and Discord (snowflake string) IDs are compared as strings
     if (config.security.allowedUserIds.length > 0) {
-      if (!config.security.allowedUserIds.includes(message.userId)) {
+      const userId = String(message.userId)
+      if (!config.security.allowedUserIds.includes(userId)) {
         log.warn(
-          { userId: message.userId },
+          { userId },
           "Rejected message from unauthorized user",
         );
         return;

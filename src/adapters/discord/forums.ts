@@ -36,6 +36,13 @@ export async function ensureForums(
     }
   }
   if (!forumChannel) {
+    // Forum channels require Community mode — check before attempting creation
+    if (!guild.features.includes('COMMUNITY')) {
+      throw new Error(
+        'Forum channels require Community mode. Enable it in Server Settings → Community. ' +
+        'Alternatively, enable it via: Server Settings → Enable Community → Complete setup.',
+      )
+    }
     const channel = await guild.channels.create({
       name: 'openacp-sessions',
       type: ChannelType.GuildForum,
@@ -113,7 +120,9 @@ export async function renameSessionThread(
 // ─── deleteSessionThread ──────────────────────────────────────────────────────
 
 /**
- * Fetches and deletes a thread. Ignores all errors.
+ * Archives and locks a thread instead of permanently deleting it.
+ * Unlike Telegram (which just closes a topic), Discord delete is permanent
+ * and destroys all messages. Archiving preserves the conversation history.
  */
 export async function deleteSessionThread(
   guild: Guild,
@@ -122,11 +131,17 @@ export async function deleteSessionThread(
   try {
     const channel = guild.channels.cache.get(threadId)
       ?? await guild.channels.fetch(threadId)
-    if (channel && 'delete' in channel) {
-      await (channel as ThreadChannel).delete()
+    if (channel && channel.isThread()) {
+      const thread = channel as ThreadChannel
+      if (!thread.archived) {
+        await thread.setArchived(true)
+      }
+      if (!thread.locked) {
+        await thread.setLocked(true)
+      }
     }
   } catch {
-    // Ignore — thread may already be deleted
+    // Ignore — thread may already be deleted or inaccessible
   }
 }
 
