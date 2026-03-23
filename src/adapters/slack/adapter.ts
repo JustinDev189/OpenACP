@@ -111,6 +111,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
           }).catch((err: unknown) => log.warn({ err }, "Failed to send onNewSession reply"));
         }
       },
+      this.slackConfig,
     );
     this.eventRouter.register(this.app);
 

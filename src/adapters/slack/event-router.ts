@@ -1,6 +1,7 @@
 // src/adapters/slack/event-router.ts
 import type { App } from "@slack/bolt";
 import type { SlackSessionMeta } from "./types.js";
+import type { SlackChannelConfig } from "./types.js";
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "slack-event-router" });
 
@@ -24,7 +25,14 @@ export class SlackEventRouter implements ISlackEventRouter {
     private botUserId: string,
     private notificationChannelId: string | undefined,
     private onNewSession: NewSessionCallback,
+    private config?: SlackChannelConfig,
   ) {}
+
+  private isAllowedUser(userId: string): boolean {
+    const allowed = this.config?.allowedUserIds ?? [];
+    if (allowed.length === 0) return true;
+    return allowed.includes(userId);
+  }
 
   register(app: App): void {
     app.message(async ({ message }) => {
@@ -42,6 +50,12 @@ export class SlackEventRouter implements ISlackEventRouter {
 
       // Ignore messages from the bot itself
       if (userId === this.botUserId) return;
+
+      // Enforce allowedUserIds
+      if (!this.isAllowedUser(userId)) {
+        log.warn({ userId }, "slack: message from non-allowed user rejected");
+        return;
+      }
 
       const session = this.sessionLookup(channelId);
       if (session) {
