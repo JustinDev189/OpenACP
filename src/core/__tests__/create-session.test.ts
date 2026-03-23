@@ -3,17 +3,19 @@ import { Session } from "../session.js";
 import { EventBus } from "../event-bus.js";
 import type { AgentInstance } from "../agent-instance.js";
 import type { ChannelAdapter } from "../channel.js";
+import { TypedEmitter } from "../typed-emitter.js";
+import type { AgentEvent } from "../types.js";
 
 function createMockAgentInstance(sessionId = "agent-session-1"): AgentInstance {
-  return {
+  const emitter = new TypedEmitter<{ agent_event: (event: AgentEvent) => void }>();
+  return Object.assign(emitter, {
     sessionId,
     agentName: "test-agent",
     prompt: vi.fn().mockResolvedValue({}),
     cancel: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),
-    onSessionUpdate: vi.fn(),
     onPermissionRequest: vi.fn(),
-  } as unknown as AgentInstance;
+  }) as unknown as AgentInstance;
 }
 
 function createMockAdapter(): ChannelAdapter {
@@ -152,9 +154,9 @@ describe("OpenACPCore.createSession", () => {
       workingDirectory: "/tmp/test",
     });
 
-    // Bridge wired onSessionUpdate → triggers sendMessage
+    // Bridge wired agent_event emitter → triggers sendMessage
     const textEvent = { type: "text" as const, content: "hello" };
-    session.agentInstance.onSessionUpdate(textEvent);
+    session.agentInstance.emit('agent_event', textEvent);
 
     expect(adapter.sendMessage).toHaveBeenCalled();
   });

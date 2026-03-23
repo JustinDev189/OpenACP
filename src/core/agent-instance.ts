@@ -12,6 +12,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { nodeToWebWritable, nodeToWebReadable } from "./streams.js";
 import { StderrCapture } from "./stderr-capture.js";
+import { TypedEmitter } from "./typed-emitter.js";
 import type {
   AgentDefinition,
   AgentEvent,
@@ -100,7 +101,11 @@ interface TerminalState {
   exitStatus: { exitCode: number | null; signal: string | null } | null;
 }
 
-export class AgentInstance {
+export interface AgentInstanceEvents {
+  agent_event: (event: AgentEvent) => void;
+}
+
+export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
   private connection!: ClientSideConnection;
   private child!: ChildProcess;
   private stderrCapture!: StderrCapture;
@@ -110,12 +115,12 @@ export class AgentInstance {
   agentName: string;
   promptCapabilities?: { image?: boolean; audio?: boolean };
 
-  // Callbacks — set by core when wiring events
-  onSessionUpdate: (event: AgentEvent) => void = () => {};
+  // Callback — set by core when wiring events
   onPermissionRequest: (request: PermissionRequest) => Promise<string> =
     async () => "";
 
   private constructor(agentName: string) {
+    super();
     this.agentName = agentName;
   }
 
@@ -217,7 +222,7 @@ export class AgentInstance {
       );
       if (code !== 0 && code !== null) {
         const stderr = this.stderrCapture.getLastLines();
-        this.onSessionUpdate({
+        this.emit('agent_event', {
           type: "error",
           message: `Agent crashed (exit code ${code})\n${stderr}`,
         });
@@ -376,7 +381,7 @@ export class AgentInstance {
         }
 
         if (event !== null) {
-          self.onSessionUpdate(event);
+          self.emit('agent_event', event);
         }
       },
 
