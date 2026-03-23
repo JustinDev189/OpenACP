@@ -12,6 +12,7 @@ import { FileService } from "./file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./session-store.js";
 import { UsageStore } from "./usage-store.js";
 import { UsageBudget } from "./usage-budget.js";
+import { SecurityGuard } from "./security-guard.js";
 import type { IncomingMessage, UsageRecord } from "./types.js";
 import { nanoid } from "nanoid";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
@@ -31,6 +32,7 @@ export class OpenACPCore {
   messageTransformer: MessageTransformer;
   fileService: FileService;
   readonly speechService: SpeechService;
+  securityGuard: SecurityGuard;
   adapters: Map<string, ChannelAdapter> = new Map();
   /** Set by main.ts — triggers graceful shutdown with restart exit code */
   requestRestart: (() => Promise<void>) | null = null;
@@ -53,6 +55,7 @@ export class OpenACPCore {
       config.sessionStore.ttlDays,
     );
     this.sessionManager = new SessionManager(this.sessionStore);
+    this.securityGuard = new SecurityGuard(configManager, this.sessionManager);
     this.notificationManager = new NotificationManager(this.adapters);
 
     // Usage tracking
@@ -191,7 +194,6 @@ export class OpenACPCore {
   // --- Message Routing ---
 
   async handleMessage(message: IncomingMessage): Promise<void> {
-    const config = this.configManager.get();
     log.debug(
       {
         channelId: message.channelId,
@@ -201,35 +203,18 @@ export class OpenACPCore {
       "Incoming message",
     );
 
-    // Security: check allowed user IDs
-    // Both Telegram (numeric) and Discord (snowflake string) IDs are compared as strings
-    if (config.security.allowedUserIds.length > 0) {
-      const userId = String(message.userId);
-      if (!config.security.allowedUserIds.includes(userId)) {
-        log.warn({ userId }, "Rejected message from unauthorized user");
-        return;
-      }
-    }
-
-    // Check concurrent session limit
-    const activeSessions = this.sessionManager
-      .listSessions()
-      .filter((s) => s.status === "active" || s.status === "initializing");
-    if (activeSessions.length >= config.security.maxConcurrentSessions) {
-      log.warn(
-        {
-          userId: message.userId,
-          currentCount: activeSessions.length,
-          max: config.security.maxConcurrentSessions,
-        },
-        "Session limit reached",
-      );
-      const adapter = this.adapters.get(message.channelId);
-      if (adapter) {
-        await adapter.sendMessage(message.threadId, {
-          type: "error",
-          text: `⚠️ Session limit reached (${config.security.maxConcurrentSessions}). Please cancel existing sessions with /cancel before starting new ones.`,
-        });
+    // Security: check user access and session limits
+    const access = this.securityGuard.checkAccess(message);
+    if (!access.allowed) {
+      log.warn({ userId: message.userId, reason: access.reason }, "Access denied");
+      if (access.reason.includes("Session limit")) {
+        const adapter = this.adapters.get(message.channelId);
+        if (adapter) {
+          await adapter.sendMessage(message.threadId, {
+            type: "error",
+            text: `⚠️ ${access.reason}. Please cancel existing sessions with /cancel before starting new ones.`,
+          });
+        }
       }
       return;
     }

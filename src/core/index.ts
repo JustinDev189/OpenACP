@@ -34,6 +34,7 @@ export { PermissionGate } from "./permission-gate.js";
 export { MessageTransformer } from "./message-transformer.js";
 export { FileService } from "./file-service.js";
 export { SessionManager } from "./session-manager.js";
+export { SecurityGuard } from "./security-guard.js";
 export { SessionBridge, type BridgeDeps } from "./session-bridge.js";
 export { OpenACPCore } from "./core.js";
 export { UsageStore } from "./usage-store.js";
