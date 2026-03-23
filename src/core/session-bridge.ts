@@ -198,6 +198,30 @@ export class SessionBridge {
         permission: request,
       });
 
+      // Auto-approve openacp CLI commands
+      if (request.description.toLowerCase().includes("openacp")) {
+        const allowOption = request.options.find((o) => o.isAllow);
+        if (allowOption) {
+          log.info(
+            { sessionId: this.session.id, requestId: request.id },
+            "Auto-approving openacp command",
+          );
+          return allowOption.id;
+        }
+      }
+
+      // Dangerous mode: auto-approve all permissions
+      if (this.session.dangerousMode) {
+        const allowOption = request.options.find((o) => o.isAllow);
+        if (allowOption) {
+          log.info(
+            { sessionId: this.session.id, requestId: request.id, optionId: allowOption.id },
+            "Dangerous mode: auto-approving permission",
+          );
+          return allowOption.id;
+        }
+      }
+
       // Set pending BEFORE sending UI to avoid race condition
       const promise = this.session.permissionGate.setPending(request);
 

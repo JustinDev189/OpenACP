@@ -565,19 +565,6 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
       return
     }
 
-    // Auto-approve if request is from openacp internals or dangerous mode is enabled
-    const autoApprove =
-      request.description.toLowerCase().includes('openacp') ||
-      session.dangerousMode
-
-    if (autoApprove) {
-      const allowOption = request.options.find((o) => o.isAllow)
-      if (allowOption && session.permissionGate.requestId === request.id) {
-        session.permissionGate.resolve(allowOption.id)
-      }
-      return
-    }
-
     const thread = await this.getThread(sessionId)
     if (!thread) return
 
