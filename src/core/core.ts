@@ -424,11 +424,11 @@ export class OpenACPCore {
       return null;
     }
 
-    // Don't resume cancelled/error sessions
-    if (record.status === "cancelled" || record.status === "error") {
+    // Don't resume errored sessions (cancelled sessions can still be resumed)
+    if (record.status === "error") {
       log.debug(
         { threadId: message.threadId, sessionId: record.sessionId, status: record.status },
-        "Skipping resume of cancelled/error session",
+        "Skipping resume of error session",
       );
       return null;
     }
