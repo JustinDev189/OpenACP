@@ -216,6 +216,24 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
   private async setupAssistant(): Promise<void> {
     let threadId = this.discordConfig.assistantThreadId
 
+    // Verify existing thread is still accessible
+    if (threadId) {
+      try {
+        const existing = this.guild.channels.cache.get(threadId)
+          ?? await this.guild.channels.fetch(threadId)
+        if (existing && existing.isThread()) {
+          await ensureUnarchived(existing as import('discord.js').ThreadChannel)
+          log.info({ threadId }, '[DiscordAdapter] Reusing existing assistant thread')
+        } else {
+          log.warn({ threadId }, '[DiscordAdapter] Assistant thread not found, recreating...')
+          threadId = null
+        }
+      } catch {
+        log.warn({ threadId }, '[DiscordAdapter] Assistant thread inaccessible, recreating...')
+        threadId = null
+      }
+    }
+
     if (!threadId) {
       // Create a new thread in the forum for the assistant
       const thread = await this.forumChannel.threads.create({

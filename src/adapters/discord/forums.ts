@@ -21,33 +21,53 @@ export async function ensureForums(
   let forumChannelId = config.forumChannelId
   let notificationChannelId = config.notificationChannelId
 
-  // Ensure forum channel exists
-  if (!forumChannelId) {
+  // Ensure forum channel exists — fetch existing or create new
+  let forumChannel: ForumChannel | null = null
+  if (forumChannelId) {
+    try {
+      const ch = guild.channels.cache.get(forumChannelId)
+        ?? await guild.channels.fetch(forumChannelId)
+      if (ch && ch.type === ChannelType.GuildForum) {
+        forumChannel = ch as ForumChannel
+        log.info({ forumChannelId }, '[forums] Reusing existing forum channel')
+      }
+    } catch {
+      log.warn({ forumChannelId }, '[forums] Saved forum channel not found, recreating...')
+    }
+  }
+  if (!forumChannel) {
     const channel = await guild.channels.create({
       name: 'openacp-sessions',
       type: ChannelType.GuildForum,
     })
-    forumChannelId = channel.id
+    forumChannel = channel as ForumChannel
     await saveConfig({ channels: { discord: { forumChannelId: channel.id } } })
     log.info({ forumChannelId: channel.id }, '[forums] Created forum channel')
   }
 
-  // Ensure notification channel exists
-  if (!notificationChannelId) {
+  // Ensure notification channel exists — fetch existing or create new
+  let notificationChannel: TextChannel | null = null
+  if (notificationChannelId) {
+    try {
+      const ch = guild.channels.cache.get(notificationChannelId)
+        ?? await guild.channels.fetch(notificationChannelId)
+      if (ch && ch.type === ChannelType.GuildText) {
+        notificationChannel = ch as TextChannel
+        log.info({ notificationChannelId }, '[forums] Reusing existing notification channel')
+      }
+    } catch {
+      log.warn({ notificationChannelId }, '[forums] Saved notification channel not found, recreating...')
+    }
+  }
+  if (!notificationChannel) {
     const channel = await guild.channels.create({
       name: 'openacp-notifications',
       type: ChannelType.GuildText,
     })
-    notificationChannelId = channel.id
+    notificationChannel = channel as TextChannel
     await saveConfig({ channels: { discord: { notificationChannelId: channel.id } } })
     log.info({ notificationChannelId: channel.id }, '[forums] Created notification channel')
   }
-
-  const forumChannel = guild.channels.cache.get(forumChannelId) as ForumChannel
-    ?? await guild.channels.fetch(forumChannelId) as ForumChannel
-
-  const notificationChannel = guild.channels.cache.get(notificationChannelId) as TextChannel
-    ?? await guild.channels.fetch(notificationChannelId) as TextChannel
 
   return { forumChannel, notificationChannel }
 }
