@@ -127,6 +127,27 @@ async function editTelegram(config: Config, updates: ConfigUpdates): Promise<voi
 
 // --- Edit: Discord ---
 
+async function validateDiscordGuild(
+  token: string,
+  guildId: string,
+): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+      headers: { Authorization: `Bot ${token}` },
+    })
+    if (res.status === 200) {
+      const data = (await res.json()) as { name: string }
+      return { ok: true, name: data.name }
+    }
+    if (res.status === 403) {
+      return { ok: false, error: 'Bot is not a member of this server. Invite the bot first.' }
+    }
+    return { ok: false, error: `Discord API returned ${res.status}` }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void> {
   const dc = (config.channels?.discord ?? {}) as Record<string, unknown>
   const currentToken = (dc.botToken as string) ?? ''
@@ -163,8 +184,7 @@ async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void
       message: 'Discord settings:',
       choices: [
         { name: isEnabled ? 'Disable Discord' : 'Enable Discord', value: 'toggle' },
-        { name: 'Change Bot Token', value: 'token' },
-        { name: 'Change Guild ID', value: 'guildid' },
+        { name: 'Configure Bot Token & Server', value: 'setup' },
         { name: 'Back', value: 'back' },
       ],
     })
@@ -177,29 +197,32 @@ async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void
       console.log(!isEnabled ? ok('Discord enabled') : ok('Discord disabled'))
     }
 
-    if (choice === 'token') {
+    if (choice === 'setup') {
+      // Step 1: Bot Token
       const token = await input({
-        message: 'New bot token:',
+        message: 'Bot token:',
         default: currentToken,
         validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
       })
 
-      const result = await validateDiscordToken(token.trim())
-      if (result.ok) {
-        console.log(ok(`Connected as @${result.username}`))
+      const tokenResult = await validateDiscordToken(token.trim())
+      if (tokenResult.ok) {
+        console.log(ok(`Connected as @${tokenResult.username}`))
       } else {
-        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+        console.log(warn(`Token validation failed: ${tokenResult.error}`))
+        const action = await select({
+          message: 'What to do?',
+          choices: [
+            { name: 'Continue anyway', value: 'continue' },
+            { name: 'Cancel', value: 'cancel' },
+          ],
+        })
+        if (action === 'cancel') continue
       }
 
-      const dcUp = ensureDiscordUpdates()
-      dcUp.botToken = token.trim()
-      // Auto-enable when token is set
-      dcUp.enabled = true
-    }
-
-    if (choice === 'guildid') {
+      // Step 2: Guild ID
       const guildIdStr = await input({
-        message: 'New Guild (server) ID:',
+        message: 'Guild (server) ID:',
         default: currentGuildId,
         validate: (val) => {
           const trimmed = val.trim()
@@ -209,9 +232,34 @@ async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void
         },
       })
 
+      // Step 3: Validate guild with the token
+      const validToken = token.trim()
+      const validGuildId = guildIdStr.trim()
+      const guildResult = await validateDiscordGuild(validToken, validGuildId)
+      if (guildResult.ok) {
+        console.log(ok(`Server: ${guildResult.name}`))
+      } else {
+        console.log(warn(`Guild validation failed: ${guildResult.error}`))
+        const action = await select({
+          message: 'What to do?',
+          choices: [
+            { name: 'Save anyway', value: 'continue' },
+            { name: 'Cancel', value: 'cancel' },
+          ],
+        })
+        if (action === 'cancel') continue
+      }
+
+      // Step 4: Save both + auto-enable
       const dcUp = ensureDiscordUpdates()
-      dcUp.guildId = guildIdStr.trim()
-      console.log(ok(`Guild ID set to ${guildIdStr.trim()}`))
+      dcUp.botToken = validToken
+      dcUp.guildId = validGuildId
+      dcUp.enabled = true
+      // Clear old channel IDs so they get recreated on next start
+      dcUp.forumChannelId = null
+      dcUp.notificationChannelId = null
+      dcUp.assistantThreadId = null
+      console.log(ok('Discord configured and enabled'))
     }
   }
 }
