@@ -52,6 +52,7 @@ const TunnelSchema = z
       .enum(["cloudflare", "ngrok", "bore", "tailscale"])
       .default("cloudflare"),
     options: z.record(z.string(), z.unknown()).default({}),
+    maxUserTunnels: z.number().default(5),
     storeTtlMinutes: z.number().default(60),
     auth: TunnelAuthSchema,
   })
