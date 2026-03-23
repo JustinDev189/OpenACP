@@ -108,6 +108,27 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
           .catch((err) => log.error({ err }, "handleMessage error"));
       },
       this.botUserId,
+      this.slackConfig.notificationChannelId,
+      (text, userId) => {
+        // Message to notification channel → create a new session
+        const config = this.core.configManager.get();
+        if (config.security.allowedUserIds.length > 0 && !config.security.allowedUserIds.includes(userId)) {
+          log.warn({ userId }, "Rejected new session request from unauthorized Slack user");
+          return;
+        }
+        this.core
+          .handleNewSession("slack")
+          .then(async (session) => {
+            // Send the first message once session channel is ready
+            await this.core.handleMessage({
+              channelId: "slack",
+              threadId: session.threadId!,
+              userId,
+              text,
+            });
+          })
+          .catch((err) => log.error({ err }, "Failed to create new session from Slack"));
+      },
     );
     this.eventRouter.register(this.app);
 
