@@ -53,9 +53,9 @@ export class SlackTextBuffer {
   async flush(): Promise<void> {
     if (this.flushing) return;
     const text = this.buffer.trim();
+    if (!text) return;
     this.buffer = "";
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
-    if (!text) return;
 
     this.flushing = true;
     try {
@@ -71,6 +71,10 @@ export class SlackTextBuffer {
       }
     } finally {
       this.flushing = false;
+      // Re-flush if content arrived while we were flushing
+      if (this.buffer.trim()) {
+        await this.flush();
+      }
     }
   }
 
