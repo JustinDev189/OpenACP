@@ -347,6 +347,7 @@ export class OpenACPCore {
     channelId: string,
     agentName?: string,
     workspacePath?: string,
+    options?: { createThread?: boolean },
   ): Promise<Session> {
     const config = this.configManager.get();
     const resolvedAgent = agentName || config.defaultAgent;
@@ -360,6 +361,7 @@ export class OpenACPCore {
       channelId,
       agentName: resolvedAgent,
       workingDirectory: resolvedWorkspace,
+      createThread: options?.createThread,
     });
   }
 
