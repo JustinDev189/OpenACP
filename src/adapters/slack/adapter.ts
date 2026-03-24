@@ -253,6 +253,13 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     }
   }
 
+  // NOTE: Async flow — different from Telegram adapter.
+  // Telegram: sendPermissionRequest awaits user response inline.
+  // Slack: posts interactive buttons and returns immediately.
+  // Resolution happens asynchronously via the Bolt action handler in
+  // SlackPermissionHandler, which calls the PermissionResponseCallback
+  // passed during construction. The callback iterates sessions to find
+  // the matching permissionGate and resolves it.
   async sendPermissionRequest(
     sessionId: string,
     request: PermissionRequest,
