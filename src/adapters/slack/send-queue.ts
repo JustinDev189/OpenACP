@@ -7,6 +7,7 @@ export type SlackMethod =
   | "conversations.create"
   | "conversations.rename"
   | "conversations.archive"
+  | "conversations.invite"
   | "conversations.join"
   | "conversations.unarchive";
 
@@ -17,6 +18,7 @@ const METHOD_RPM: Record<SlackMethod, number> = {
   "conversations.create":  20,   // Tier 2
   "conversations.rename":  20,   // Tier 2
   "conversations.archive": 20,   // Tier 2
+  "conversations.invite":  20,   // Tier 2
   "conversations.join":    20,   // Tier 2
   "conversations.unarchive": 20, // Tier 2
 };

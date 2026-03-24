@@ -33,7 +33,9 @@ Each OpenACP session maps to a dedicated Slack **channel** (private, bot-managed
 - Requires `channels:manage` / `groups:write` OAuth scopes
 - Channels accumulate — `deleteSessionThread` archives (not deletes) due to Slack API limitation
 - Channel names must be slugified (Slack rule: lowercase, ≤80 chars, no spaces/special chars)
-- Bot must self-join after creation (2 API calls instead of 1)
+- Bot is automatically a member of private channels it creates — no self-join/invite needed
+- Users must be explicitly invited via `conversations.invite` after channel creation — private channels are inaccessible to users until invited (link shows as locked, cannot be opened)
+- Invite `allowedUserIds` from config on channel creation; if empty (open workspace), skip invite
 
 **Convention:** Use private channels (`conversations.create` with `is_private: true`) to avoid cluttering the workspace's public channel list.
 

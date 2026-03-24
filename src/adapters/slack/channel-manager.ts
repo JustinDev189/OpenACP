@@ -21,13 +21,19 @@ export class SlackChannelManager implements ISlackChannelManager {
 
     const res = await this.queue.enqueue<{ channel: { id: string } }>(
       "conversations.create",
-      { name: slug, is_private: false }
+      { name: slug, is_private: true }
     );
     const channelId = res.channel.id;
 
-    // Invite bot if needed (no-op in Socket Mode — bot is already in workspace)
-    // Join the newly created channel
-    await this.queue.enqueue("conversations.join", { channel: channelId });
+    // Bot is automatically a member of private channels it creates — no join/invite needed.
+    // Invite configured users so they can access the channel.
+    const userIds = this.config.allowedUserIds ?? [];
+    if (userIds.length > 0) {
+      await this.queue.enqueue("conversations.invite", {
+        channel: channelId,
+        users: userIds.join(","),
+      });
+    }
 
     return { channelId, channelSlug: slug };
   }

@@ -14,32 +14,34 @@
 
 ## File Structure
 
-| File | Action | Responsibility |
-|------|--------|----------------|
-| `src/adapters/slack/types.ts` | **New** | `SlackChannelConfig`, `SlackSessionMeta` |
-| `src/adapters/slack/slug.ts` | **New** | Channel name slugifier |
-| `src/adapters/slack/formatter.ts` | **New** | `ISlackFormatter` + Block Kit impl |
-| `src/adapters/slack/send-queue.ts` | **New** | `ISlackSendQueue` + per-method rate limiter |
-| `src/adapters/slack/channel-manager.ts` | **New** | `ISlackChannelManager` + Slack API CRUD |
-| `src/adapters/slack/permission-handler.ts` | **New** | Interactive components (buttons) |
-| `src/adapters/slack/event-router.ts` | **New** | Bolt events → `core.handleMessage` |
-| `src/adapters/slack/adapter.ts` | **New** | `SlackAdapter extends ChannelAdapter` (~200 lines) |
-| `src/core/config.ts` | **Minor** | +`SlackChannelConfigSchema` (~25 lines) |
-| `src/main.ts` | **Minor** | +Slack registration block (~25 lines) |
-| `src/adapters/telegram/` | **No change** | |
-| `src/core/core.ts` | **No change** | |
-| `src/core/session.ts` | **No change** | |
-| `src/core/channel.ts` | **No change** | |
+
+| File                                       | Action        | Responsibility                                     |
+| ------------------------------------------ | ------------- | -------------------------------------------------- |
+| `src/adapters/slack/types.ts`              | **New**       | `SlackChannelConfig`, `SlackSessionMeta`           |
+| `src/adapters/slack/slug.ts`               | **New**       | Channel name slugifier                             |
+| `src/adapters/slack/formatter.ts`          | **New**       | `ISlackFormatter` + Block Kit impl                 |
+| `src/adapters/slack/send-queue.ts`         | **New**       | `ISlackSendQueue` + per-method rate limiter        |
+| `src/adapters/slack/channel-manager.ts`    | **New**       | `ISlackChannelManager` + Slack API CRUD            |
+| `src/adapters/slack/permission-handler.ts` | **New**       | Interactive components (buttons)                   |
+| `src/adapters/slack/event-router.ts`       | **New**       | Bolt events → `core.handleMessage`                 |
+| `src/adapters/slack/adapter.ts`            | **New**       | `SlackAdapter extends ChannelAdapter` (~200 lines) |
+| `src/core/config.ts`                       | **Minor**     | +`SlackChannelConfigSchema` (~25 lines)            |
+| `src/main.ts`                              | **Minor**     | +Slack registration block (~25 lines)              |
+| `src/adapters/telegram/`                   | **No change** |                                                    |
+| `src/core/core.ts`                         | **No change** |                                                    |
+| `src/core/session.ts`                      | **No change** |                                                    |
+| `src/core/channel.ts`                      | **No change** |                                                    |
+
 
 ---
 
 ## Task 1: Install dependency + Config schema
 
 **Files:**
+
 - Modify: `package.json` (via pnpm)
 - Modify: `src/core/config.ts`
-
-- [ ] **Step 1: Install @slack/bolt and p-queue**
+- **Step 1: Install @slack/bolt and p-queue**
 
 ```bash
 pnpm add @slack/bolt p-queue
@@ -47,7 +49,7 @@ pnpm add @slack/bolt p-queue
 
 Expected: Both appear in `package.json` dependencies.
 
-- [ ] **Step 2: Add SlackChannelConfigSchema to config.ts**
+- **Step 2: Add SlackChannelConfigSchema to config.ts**
 
 In `src/core/config.ts`, find the existing channel config schemas and add `SlackChannelConfigSchema` alongside them. Add before the main `ConfigSchema`:
 
@@ -66,7 +68,7 @@ const SlackChannelConfigSchema = z.object({
 export type SlackChannelConfig = z.infer<typeof SlackChannelConfigSchema>;
 ```
 
-- [ ] **Step 3: Register in channels union**
+- **Step 3: Register in channels union**
 
 Find where the `channels` field is defined in `ConfigSchema` and add the Slack case. Keep all existing entries — additive only:
 
@@ -75,7 +77,7 @@ Find where the `channels` field is defined in `ConfigSchema` and add the Slack c
 slack: SlackChannelConfigSchema.optional(),
 ```
 
-- [ ] **Step 4: Build and verify no type errors**
+- **Step 4: Build and verify no type errors**
 
 ```bash
 pnpm build
@@ -83,7 +85,7 @@ pnpm build
 
 Expected: Compiles successfully. `SlackChannelConfig` is now exported from config.ts.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add package.json pnpm-lock.yaml src/core/config.ts
@@ -95,10 +97,10 @@ git commit -m "feat(slack): add @slack/bolt dependency and SlackChannelConfig sc
 ## Task 2: Types + Slug utility
 
 **Files:**
+
 - New: `src/adapters/slack/types.ts`
 - New: `src/adapters/slack/slug.ts`
-
-- [ ] **Step 1: Create types.ts**
+- **Step 1: Create types.ts**
 
 ```typescript
 // src/adapters/slack/types.ts
@@ -111,7 +113,7 @@ export interface SlackSessionMeta {
 }
 ```
 
-- [ ] **Step 2: Create slug.ts**
+- **Step 2: Create slug.ts**
 
 ```typescript
 // src/adapters/slack/slug.ts
@@ -140,13 +142,13 @@ export function toSlug(name: string, prefix = "openacp"): string {
 }
 ```
 
-- [ ] **Step 3: Build**
+- **Step 3: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add src/adapters/slack/types.ts src/adapters/slack/slug.ts
@@ -158,10 +160,10 @@ git commit -m "feat(slack): add SlackSessionMeta types and channel slug utility"
 ## Task 3: SlackFormatter + SlackTextBuffer — Block Kit + streaming buffer
 
 **Files:**
+
 - New: `src/adapters/slack/formatter.ts`
 - New: `src/adapters/slack/text-buffer.ts`
-
-- [ ] **Step 1: Create the ISlackFormatter interface and SlackFormatter class**
+- **Step 1: Create the ISlackFormatter interface and SlackFormatter class**
 
 > **Note:** AI agent responses stream as many small text chunks. Posting each chunk as a separate Slack message creates a very poor UX. `SlackTextBuffer` accumulates chunks per session and flushes them as a single message after a 2-second idle timeout (or immediately on `session_end`). `markdownToMrkdwn` converts standard markdown from AI responses (headers, bold, lists, links) into Slack mrkdwn format before sending.
 
@@ -213,7 +215,7 @@ export class SlackFormatter implements ISlackFormatter {
         return splitSafe(message.text ?? "").map(chunk => section(chunk));
 
       case "thought":
-        return [context(`💭 _${(message.text ?? "").slice(0, 500)}_`)];
+        return [context(`💭 _${(message.text ?? "").slice(0, 500)}`_)];
 
       case "tool_call": {
         const name = (message as any).metadata?.name ?? "tool";
@@ -286,7 +288,7 @@ export class SlackFormatter implements ISlackFormatter {
 }
 ```
 
-- [ ] **Step 2: Add `markdownToMrkdwn` converter to formatter.ts**
+- **Step 2: Add `markdownToMrkdwn` converter to formatter.ts**
 
 Converts AI markdown to Slack mrkdwn before posting:
 
@@ -304,7 +306,7 @@ export function markdownToMrkdwn(text: string): string {
 
 Apply in `formatOutgoing` for `type: "text"` — skip posting if text is empty after trimming (avoids `invalid_blocks` error from Slack API).
 
-- [ ] **Step 3: Create `src/adapters/slack/text-buffer.ts`**
+- **Step 3: Create `src/adapters/slack/text-buffer.ts`**
 
 ```typescript
 // Buffers streamed text chunks per session, flushes as a single Slack message.
@@ -326,7 +328,7 @@ export class SlackTextBuffer {
 
 `SlackAdapter.sendMessage()` routes `type: "text"` through `SlackTextBuffer.append()` instead of posting immediately. On `type: "session_end"` or `type: "error"`, flush and destroy the buffer first.
 
-- [ ] **Step 4: Build**
+- **Step 4: Build**
 
 ```bash
 pnpm build
@@ -334,7 +336,7 @@ pnpm build
 
 Expected: No type errors.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add src/adapters/slack/formatter.ts src/adapters/slack/text-buffer.ts
@@ -346,9 +348,9 @@ git commit -m "feat(slack): add SlackFormatter with Block Kit output and SlackTe
 ## Task 4: SlackSendQueue — Per-method rate limiter
 
 **Files:**
-- New: `src/adapters/slack/send-queue.ts`
 
-- [ ] **Step 1: Create ISlackSendQueue interface and SlackSendQueue class**
+- New: `src/adapters/slack/send-queue.ts`
+- **Step 1: Create ISlackSendQueue interface and SlackSendQueue class**
 
 Slack rate limits each API method independently by tier. `p-queue` is used to throttle each method separately.
 
@@ -363,7 +365,7 @@ export type SlackMethod =
   | "conversations.create"
   | "conversations.rename"
   | "conversations.archive"
-  | "conversations.join"
+  | "conversations.invite"
   | "conversations.unarchive";
 
 // Requests per minute per method (Slack Tier definitions)
@@ -373,7 +375,7 @@ const METHOD_RPM: Record<SlackMethod, number> = {
   "conversations.create":  20,   // Tier 2
   "conversations.rename":  20,   // Tier 2
   "conversations.archive": 20,   // Tier 2
-  "conversations.join":    20,   // Tier 2
+  "conversations.invite":  20,   // Tier 2
   "conversations.unarchive": 20, // Tier 2
 };
 
@@ -403,13 +405,13 @@ export class SlackSendQueue implements ISlackSendQueue {
 }
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/send-queue.ts
@@ -421,9 +423,9 @@ git commit -m "feat(slack): add SlackSendQueue with per-method rate limiting (p-
 ## Task 5: SlackChannelManager — Channel CRUD
 
 **Files:**
-- New: `src/adapters/slack/channel-manager.ts`
 
-- [ ] **Step 1: Create ISlackChannelManager interface and implementation**
+- New: `src/adapters/slack/channel-manager.ts`
+- **Step 1: Create ISlackChannelManager interface and implementation**
 
 ```typescript
 // src/adapters/slack/channel-manager.ts
@@ -436,7 +438,6 @@ export interface ISlackChannelManager {
   rename(channelId: string, slug: string): Promise<void>;
   archive(channelId: string): Promise<void>;
   unarchiveAndPost(channelId: string): Promise<void>;  // for lazy resume on archived channel
-  ensureBotJoined(channelId: string): Promise<void>;
   getNotificationChannelId(): string;
 }
 
@@ -448,12 +449,13 @@ export class SlackChannelManager implements ISlackChannelManager {
   ) {}
 
   async create(slug: string): Promise<string> {
+    let channelId: string;
     try {
       const res = await this.sendQueue.enqueue<{ channel: { id: string } }>(
         "conversations.create",
         { name: slug, is_private: true },
       );
-      return res.channel.id;
+      channelId = res.channel.id;
     } catch (err: any) {
       // Handle name_taken — regenerate suffix and retry once
       if (err?.data?.error === "name_taken") {
@@ -463,10 +465,24 @@ export class SlackChannelManager implements ISlackChannelManager {
           "conversations.create",
           { name: newSlug, is_private: true },
         );
-        return res.channel.id;
+        channelId = res.channel.id;
+      } else {
+        throw err;
       }
-      throw err;
     }
+
+    // Bot is automatically a member of private channels it creates — no self-join needed.
+    // Invite allowedUserIds so they can access the channel (private channels are inaccessible
+    // until explicitly invited — user sees a locked link they cannot open).
+    const userIds = this.config.allowedUserIds ?? [];
+    if (userIds.length > 0) {
+      await this.sendQueue.enqueue("conversations.invite", {
+        channel: channelId,
+        users: userIds.join(","),
+      });
+    }
+
+    return channelId;
   }
 
   async rename(channelId: string, slug: string): Promise<void> {
@@ -482,12 +498,9 @@ export class SlackChannelManager implements ISlackChannelManager {
 
   async unarchiveAndPost(channelId: string): Promise<void> {
     // Unarchive if archived — needed when lazy-resuming a finished session
+    // After unarchive, bot must be re-invited (bot is removed when channel is archived)
     await this.sendQueue.enqueue("conversations.unarchive", { channel: channelId });
-    await this.ensureBotJoined(channelId);
-  }
-
-  async ensureBotJoined(channelId: string): Promise<void> {
-    await this.sendQueue.enqueue("conversations.join", { channel: channelId });
+    await this.sendQueue.enqueue("conversations.invite", { channel: channelId, users: this.botUserId });
   }
 
   getNotificationChannelId(): string {
@@ -496,13 +509,13 @@ export class SlackChannelManager implements ISlackChannelManager {
 }
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/channel-manager.ts
@@ -514,9 +527,9 @@ git commit -m "feat(slack): add SlackChannelManager (create/rename/archive/join)
 ## Task 6: SlackPermissionHandler — Interactive buttons
 
 **Files:**
-- New: `src/adapters/slack/permission-handler.ts`
 
-- [ ] **Step 1: Create SlackPermissionHandler**
+- New: `src/adapters/slack/permission-handler.ts`
+- **Step 1: Create SlackPermissionHandler**
 
 ```typescript
 // src/adapters/slack/permission-handler.ts
@@ -564,7 +577,7 @@ export class SlackPermissionHandler {
           );
           updatedBlocks.push({
             type: "context",
-            elements: [{ type: "mrkdwn", text: `_Responded: ${btn.text.text}_` }],
+            elements: [{ type: "mrkdwn", text: `_Responded: ${btn.text.text}`_ }],
           });
           await client.chat.update({
             channel: blockAction.channel.id,
@@ -598,13 +611,13 @@ export class SlackPermissionHandler {
 }
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/permission-handler.ts
@@ -616,9 +629,9 @@ git commit -m "feat(slack): add SlackPermissionHandler with interactive button r
 ## Task 7: SlackEventRouter — Bolt events → core
 
 **Files:**
-- New: `src/adapters/slack/event-router.ts`
 
-- [ ] **Step 1: Create SlackEventRouter**
+- New: `src/adapters/slack/event-router.ts`
+- **Step 1: Create SlackEventRouter**
 
 ```typescript
 // src/adapters/slack/event-router.ts
@@ -717,13 +730,13 @@ export class SlackEventRouter {
 }
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/event-router.ts
@@ -735,10 +748,10 @@ git commit -m "feat(slack): add SlackEventRouter — Bolt messages + slash comma
 ## Task 8: SlackAdapter — Orchestrator + main.ts wiring
 
 **Files:**
+
 - New: `src/adapters/slack/adapter.ts`
 - Modify: `src/main.ts`
-
-- [ ] **Step 1: Create SlackAdapter**
+- **Step 1: Create SlackAdapter**
 
 ```typescript
 // src/adapters/slack/adapter.ts
@@ -806,8 +819,8 @@ export class SlackAdapter extends ChannelAdapter {
 
   async createSessionThread(_parentThreadId: string, label: string): Promise<string> {
     const slug = toSlug(label, this.config.channelPrefix);
+    // channelManager.create handles both channel creation and user invite (allowedUserIds)
     const channelId = await this.channelManager.create(slug);
-    await this.channelManager.ensureBotJoined(channelId);
     return channelId;
   }
 
@@ -861,7 +874,7 @@ export class SlackAdapter extends ChannelAdapter {
 }
 ```
 
-- [ ] **Step 2: Add Slack registration block to main.ts**
+- **Step 2: Add Slack registration block to main.ts**
 
 Find the section in `src/main.ts` where Telegram adapter is registered (look for `TelegramAdapter` or `core.registerAdapter`). Add the Slack block **after** it, keeping Telegram untouched:
 
@@ -902,7 +915,7 @@ if (config.channels?.slack?.enabled) {
 }
 ```
 
-- [ ] **Step 3: Add SlackChannelConfig import to main.ts**
+- **Step 3: Add SlackChannelConfig import to main.ts**
 
 At the top of `src/main.ts`, add to existing config import:
 
@@ -911,7 +924,7 @@ At the top of `src/main.ts`, add to existing config import:
 import type { SlackChannelConfig } from "./core/config.js";
 ```
 
-- [ ] **Step 4: Build**
+- **Step 4: Build**
 
 ```bash
 pnpm build
@@ -919,7 +932,7 @@ pnpm build
 
 Expected: Full compile, no errors.
 
-- [ ] **Step 5: Smoke test — start without Slack config**
+- **Step 5: Smoke test — start without Slack config**
 
 ```bash
 node dist/cli.js start
@@ -927,7 +940,7 @@ node dist/cli.js start
 
 Expected: Starts normally, no Slack-related errors (Slack block skipped because `enabled: false` by default).
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add src/adapters/slack/adapter.ts src/main.ts
@@ -939,11 +952,12 @@ git commit -m "feat(slack): add SlackAdapter orchestrator and register in main.t
 ## Task 9: Setup guide
 
 **Files:**
+
 - New: `src/adapters/slack/setup-guide.ts`
 
 This module is invoked during `openacp setup` or `openacp setup --slack` to walk the user through creating a Slack App with the correct scopes.
 
-- [ ] **Step 1: Create setup-guide.ts**
+- **Step 1: Create setup-guide.ts**
 
 ```typescript
 // src/adapters/slack/setup-guide.ts
@@ -1021,7 +1035,7 @@ export async function runSlackSetup(configManager: ConfigManager): Promise<void>
 }
 ```
 
-- [ ] **Step 2: Plug into existing setup.ts**
+- **Step 2: Plug into existing setup.ts**
 
 In `src/core/setup.ts` (or wherever `openacp setup` is handled), add:
 
@@ -1034,13 +1048,13 @@ if (setupSlack) {
 }
 ```
 
-- [ ] **Step 3: Build**
+- **Step 3: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add src/adapters/slack/setup-guide.ts src/core/setup.ts
@@ -1052,11 +1066,11 @@ git commit -m "feat(slack): add interactive setup guide for Slack App configurat
 ## Task 10: Tests
 
 **Files:**
+
 - New: `src/adapters/slack/slug.test.ts`
 - New: `src/adapters/slack/formatter.test.ts`
 - New: `src/adapters/slack/send-queue.test.ts`
-
-- [ ] **Step 1: slug.test.ts**
+- **Step 1: slug.test.ts**
 
 ```typescript
 // src/adapters/slack/slug.test.ts
@@ -1098,7 +1112,7 @@ describe("toSlug", () => {
 });
 ```
 
-- [ ] **Step 2: formatter.test.ts**
+- **Step 2: formatter.test.ts**
 
 ```typescript
 // src/adapters/slack/formatter.test.ts
@@ -1165,7 +1179,7 @@ describe("SlackFormatter.formatPermissionRequest", () => {
 });
 ```
 
-- [ ] **Step 3: send-queue.test.ts**
+- **Step 3: send-queue.test.ts**
 
 ```typescript
 // src/adapters/slack/send-queue.test.ts
@@ -1206,7 +1220,7 @@ describe("SlackSendQueue", () => {
 });
 ```
 
-- [ ] **Step 4: Run tests**
+- **Step 4: Run tests**
 
 ```bash
 pnpm test
@@ -1214,7 +1228,7 @@ pnpm test
 
 Expected: All new tests pass.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add src/adapters/slack/slug.test.ts src/adapters/slack/formatter.test.ts src/adapters/slack/send-queue.test.ts
@@ -1225,7 +1239,7 @@ git commit -m "test(slack): add unit tests for slug, formatter, send-queue"
 
 ## Task 11: Final verification
 
-- [ ] **Step 1: Full build**
+- **Step 1: Full build**
 
 ```bash
 pnpm build
@@ -1233,7 +1247,7 @@ pnpm build
 
 Expected: Zero errors, zero warnings about missing types.
 
-- [ ] **Step 2: Full test suite**
+- **Step 2: Full test suite**
 
 ```bash
 pnpm test
@@ -1241,7 +1255,7 @@ pnpm test
 
 Expected: All tests pass (new + existing).
 
-- [ ] **Step 3: Start without Slack enabled (regression check)**
+- **Step 3: Start without Slack enabled (regression check)**
 
 ```bash
 node dist/cli.js start
@@ -1249,7 +1263,7 @@ node dist/cli.js start
 
 Expected: Starts normally, Telegram adapter works, no Slack errors.
 
-- [ ] **Step 4: Verify zero changes to core**
+- **Step 4: Verify zero changes to core**
 
 ```bash
 git diff HEAD~11 -- src/core/core.ts src/core/session.ts src/core/channel.ts src/adapters/telegram/
@@ -1257,7 +1271,7 @@ git diff HEAD~11 -- src/core/core.ts src/core/session.ts src/core/channel.ts src
 
 Expected: Empty diff — core and Telegram adapter unchanged.
 
-- [ ] **Step 5: Final commit**
+- **Step 5: Final commit**
 
 ```bash
 git add -A
@@ -1271,6 +1285,7 @@ git commit -m "feat(slack): complete Slack channel adapter (SOLID, channel-per-s
 Issues identified by code review that must be fixed before merge. See spec section "Post-Implementation Issues" for full context.
 
 **Files:**
+
 - Modify: `src/adapters/slack/formatter.ts`
 - Modify: `src/adapters/slack/text-buffer.ts`
 - Modify: `src/adapters/slack/adapter.ts`
@@ -1287,7 +1302,7 @@ Issues identified by code review that must be fixed before merge. See spec secti
 
 **File:** `src/adapters/slack/formatter.ts`
 
-- [ ] **Step 1: Write failing test**
+- **Step 1: Write failing test**
 
 In `src/adapters/slack/formatter.test.ts`, add:
 
@@ -1318,7 +1333,7 @@ describe("markdownToMrkdwn", () => {
 });
 ```
 
-- [ ] **Step 2: Run test — verify bold test fails**
+- **Step 2: Run test — verify bold test fails**
 
 ```bash
 pnpm test formatter
@@ -1326,7 +1341,7 @@ pnpm test formatter
 
 Expected: `"converts bold without converting to italic"` FAILS — bold gets converted to italic.
 
-- [ ] **Step 3: Fix `markdownToMrkdwn` in `formatter.ts`**
+- **Step 3: Fix `markdownToMrkdwn` in `formatter.ts`**
 
 Replace the current `markdownToMrkdwn` function with placeholder-based approach:
 
@@ -1344,7 +1359,7 @@ export function markdownToMrkdwn(text: string): string {
 }
 ```
 
-- [ ] **Step 4: Run tests — verify pass**
+- **Step 4: Run tests — verify pass**
 
 ```bash
 pnpm test formatter
@@ -1352,7 +1367,7 @@ pnpm test formatter
 
 Expected: All `markdownToMrkdwn` tests PASS.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add src/adapters/slack/formatter.ts src/adapters/slack/formatter.test.ts
@@ -1365,7 +1380,7 @@ git commit -m "fix(slack): fix bold/italic ordering bug in markdownToMrkdwn usin
 
 **File:** `src/adapters/slack/adapter.ts`
 
-- [ ] **Step 1: Replace warn with throw in `start()`**
+- **Step 1: Replace warn with throw in `start()`**
 
 Find this block in `adapter.ts`:
 
@@ -1390,7 +1405,7 @@ this.botUserId = authResult.user_id as string;
 log.info({ botUserId: this.botUserId }, "Slack bot authenticated");
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
@@ -1398,7 +1413,7 @@ pnpm build
 
 Expected: Compiles without errors.
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/adapter.ts
@@ -1411,7 +1426,7 @@ git commit -m "fix(slack): throw on auth.test() failure to prevent infinite mess
 
 **File:** `src/adapters/slack/adapter.ts`
 
-- [ ] **Step 1: Replace no-op callback with reply**
+- **Step 1: Replace no-op callback with reply**
 
 Find the `onNewSession` callback in `start()`:
 
@@ -1433,13 +1448,13 @@ async (_text, _userId) => {
 },
 ```
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/adapter.ts
@@ -1452,7 +1467,7 @@ git commit -m "fix(slack): reply with guidance when user messages notification c
 
 **File:** `src/adapters/slack/event-router.ts`
 
-- [ ] **Step 1: Add `config` param and `isAllowedUser` check**
+- **Step 1: Add `config` param and `isAllowedUser` check**
 
 Add `config` parameter to `SlackEventRouter` constructor and enforce `allowedUserIds`:
 
@@ -1492,17 +1507,17 @@ export class SlackEventRouter implements ISlackEventRouter {
 }
 ```
 
-- [ ] **Step 2: Pass `config` when constructing `SlackEventRouter` in `adapter.ts`**
+- **Step 2: Pass `config` when constructing `SlackEventRouter` in `adapter.ts`**
 
 Find the `new SlackEventRouter(...)` call in `adapter.ts` and add `this.slackConfig` as the last argument.
 
-- [ ] **Step 3: Build**
+- **Step 3: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add src/adapters/slack/event-router.ts src/adapters/slack/adapter.ts
@@ -1515,7 +1530,7 @@ git commit -m "fix(slack): enforce allowedUserIds in SlackEventRouter"
 
 **File:** `src/adapters/slack/adapter.ts`
 
-- [ ] **Step 1: Replace inline slug logic**
+- **Step 1: Replace inline slug logic**
 
 Find `renameSessionThread` in `adapter.ts`:
 
@@ -1539,13 +1554,13 @@ const newSlug = toSlug(newName, this.slackConfig.channelPrefix ?? "openacp");
 
 Make sure `toSlug` is imported at the top of `adapter.ts`.
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
 ```
 
-- [ ] **Step 3: Commit**
+- **Step 3: Commit**
 
 ```bash
 git add src/adapters/slack/adapter.ts
@@ -1558,7 +1573,7 @@ git commit -m "fix(slack): use toSlug() in renameSessionThread to prevent channe
 
 **File:** `src/core/core.ts`
 
-- [ ] **Step 1: Fix the `Number()` cast**
+- **Step 1: Fix the `Number()` cast**
 
 In `core.ts`, find `adoptSession`. Locate:
 
@@ -1572,7 +1587,7 @@ Replace with:
 platform: { topicId: session.threadId },
 ```
 
-- [ ] **Step 2: Verify Telegram still works**
+- **Step 2: Verify Telegram still works**
 
 Check the `topicId` field type in the Telegram adapter — Telegram uses numeric topic IDs. Verify the type definition of `platform` allows `string | number`:
 
@@ -1582,7 +1597,7 @@ grep -r "topicId" src/
 
 If `topicId` is typed as `number` somewhere, change to `string | number`.
 
-- [ ] **Step 3: Build**
+- **Step 3: Build**
 
 ```bash
 pnpm build
@@ -1590,7 +1605,7 @@ pnpm build
 
 Expected: No type errors.
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add src/core/core.ts
@@ -1603,7 +1618,7 @@ git commit -m "fix(core): store adoptSession threadId as string to support Slack
 
 **File:** `src/adapters/slack/text-buffer.ts`
 
-- [ ] **Step 1: Write failing test for concurrent flush**
+- **Step 1: Write failing test for concurrent flush**
 
 Create `src/adapters/slack/text-buffer.test.ts`:
 
@@ -1662,7 +1677,7 @@ describe("SlackTextBuffer", () => {
 });
 ```
 
-- [ ] **Step 2: Run test — verify concurrent flush test fails**
+- **Step 2: Run test — verify concurrent flush test fails**
 
 ```bash
 pnpm test text-buffer
@@ -1670,7 +1685,7 @@ pnpm test text-buffer
 
 Expected: `"does not lose content appended during flush"` FAILS.
 
-- [ ] **Step 3: Fix `flush()` in `text-buffer.ts`**
+- **Step 3: Fix `flush()` in `text-buffer.ts`**
 
 Replace the current `flush()` implementation:
 
@@ -1704,7 +1719,7 @@ async flush(): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: Run tests — verify all pass**
+- **Step 4: Run tests — verify all pass**
 
 ```bash
 pnpm test text-buffer
@@ -1712,7 +1727,7 @@ pnpm test text-buffer
 
 Expected: All 3 tests PASS.
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add src/adapters/slack/text-buffer.ts src/adapters/slack/text-buffer.test.ts
@@ -1725,7 +1740,7 @@ git commit -m "fix(slack): prevent TextBuffer data loss during concurrent flush"
 
 **Files:** `src/adapters/slack/utils.ts` (new), `src/adapters/slack/formatter.ts`, `src/adapters/slack/text-buffer.ts`, `src/adapters/slack/adapter.ts` (header), `src/adapters/slack/index.ts` (new)
 
-- [ ] **Step 1: Create `src/adapters/slack/utils.ts`**
+- **Step 1: Create `src/adapters/slack/utils.ts`**
 
 ```typescript
 // src/adapters/slack/utils.ts
@@ -1751,38 +1766,45 @@ export function splitSafe(text: string, limit = SECTION_LIMIT): string[] {
 }
 ```
 
-- [ ] **Step 2: Update `formatter.ts` and `text-buffer.ts` to import from `utils.ts`**
+- **Step 2: Update `formatter.ts` and `text-buffer.ts` to import from `utils.ts`**
 
 In `formatter.ts`, remove the local `splitSafe` function and add:
+
 ```typescript
 import { splitSafe } from "./utils.js";
 ```
 
 In `text-buffer.ts`, remove the local `splitSafe` function and add:
+
 ```typescript
 import { splitSafe } from "./utils.js";
 ```
 
-- [ ] **Step 3: Fix file header comment in `adapter.ts`**
+- **Step 3: Fix file header comment in `adapter.ts`**
 
 Change line 1:
+
 ```typescript
 // src/adapters/slack/index.ts
 ```
+
 to:
+
 ```typescript
 // src/adapters/slack/adapter.ts
 ```
 
-- [ ] **Step 3b: Fix `config as never` type cast in `SlackAdapter` constructor**
+- **Step 3b: Fix `config as never` type cast in `SlackAdapter` constructor**
 
 In `adapter.ts`, find:
+
 ```typescript
 constructor(core: OpenACPCore, config: SlackChannelConfig) {
   super(core, config as never);
 ```
 
 `ChannelAdapter` is generic — fix by passing the correct type argument:
+
 ```typescript
 export class SlackAdapter extends ChannelAdapter<OpenACPCore, SlackChannelConfig> {
   constructor(core: OpenACPCore, config: SlackChannelConfig) {
@@ -1791,7 +1813,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore, SlackChannelConfig
 
 Check `src/core/channel.ts` for the exact generic signature of `ChannelAdapter` to confirm the type parameters before making this change.
 
-- [ ] **Step 4: Create `src/adapters/slack/index.ts` barrel export**
+- **Step 4: Create `src/adapters/slack/index.ts` barrel export**
 
 ```typescript
 // src/adapters/slack/index.ts
@@ -1799,7 +1821,7 @@ export { SlackAdapter } from "./adapter.js";
 export type { SlackChannelConfig } from "./types.js";
 ```
 
-- [ ] **Step 5: Build and run all tests**
+- **Step 5: Build and run all tests**
 
 ```bash
 pnpm build && pnpm test
@@ -1807,7 +1829,7 @@ pnpm build && pnpm test
 
 Expected: Zero errors, all tests pass.
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add src/adapters/slack/utils.ts src/adapters/slack/index.ts src/adapters/slack/formatter.ts src/adapters/slack/text-buffer.ts src/adapters/slack/adapter.ts
@@ -1818,7 +1840,7 @@ git commit -m "refactor(slack): extract splitSafe to utils, add barrel export, f
 
 ### Final verification for Task 12
 
-- [ ] **Step 1: Full test suite**
+- **Step 1: Full test suite**
 
 ```bash
 pnpm test
@@ -1826,7 +1848,7 @@ pnpm test
 
 Expected: All tests pass including new ones for `markdownToMrkdwn` and `SlackTextBuffer`.
 
-- [ ] **Step 2: Build**
+- **Step 2: Build**
 
 ```bash
 pnpm build
@@ -1834,7 +1856,7 @@ pnpm build
 
 Expected: Zero errors.
 
-- [ ] **Step 3: Verify core diff is minimal**
+- **Step 3: Verify core diff is minimal**
 
 ```bash
 git diff origin/main -- src/core/core.ts
