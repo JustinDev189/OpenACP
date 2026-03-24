@@ -8,9 +8,13 @@ import {
   progressBar,
   formatTokens,
   truncateContent,
+  stripCodeFences,
   splitMessage as sharedSplitMessage,
 } from "../shared/format-utils.js";
-import { extractContentText } from "../shared/message-formatter.js";
+import {
+  extractContentText,
+  formatToolSummary,
+} from "../shared/message-formatter.js";
 
 // Discord-specific override: command uses ⚡ instead of ▶️
 const DISCORD_KIND_ICONS: Record<string, string> = {
@@ -37,15 +41,17 @@ export function formatToolCall(tool: {
   kind?: string;
   status?: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }): string {
   const si = STATUS_ICONS[tool.status || ""] || "🔧";
-  const ki = DISCORD_KIND_ICONS[tool.kind || ""] || "🛠️";
-  let text = `${si} ${ki} **${tool.name || "Tool"}**`;
+  const name = tool.name || "Tool";
+  const summary = formatToolSummary(name, tool.rawInput);
+  let text = `${si} **${summary}**`;
   text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
   if (!tool.viewerLinks) {
-    const details = extractContentText(tool.content);
+    const details = stripCodeFences(extractContentText(tool.content));
     if (details) {
       text += `\n\`\`\`\n${truncateContent(details, 500)}\n\`\`\``;
     }
@@ -59,6 +65,7 @@ export function formatToolUpdate(update: {
   kind?: string;
   status: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }): string {
@@ -100,7 +107,7 @@ export const discordRenderer: MessageRenderer = {
   render(msg: FormattedMessage, _expanded: boolean): string {
     if (msg.style === "tool") {
       const detail = msg.detail
-        ? `\n\`\`\`\n${truncateContent(msg.detail, 500)}\n\`\`\``
+        ? `\n\`\`\`\n${truncateContent(stripCodeFences(msg.detail), 500)}\n\`\`\``
         : "";
       return `${msg.summary}${detail}`;
     }

@@ -8,9 +8,13 @@ import {
   progressBar,
   formatTokens,
   truncateContent,
+  stripCodeFences,
   splitMessage as sharedSplitMessage,
 } from "../shared/format-utils.js";
-import { extractContentText } from "../shared/message-formatter.js";
+import {
+  extractContentText,
+  formatToolSummary,
+} from "../shared/message-formatter.js";
 
 export function escapeHtml(text: string | undefined | null): string {
   if (!text) return "";
@@ -78,15 +82,17 @@ export function formatToolCall(tool: {
   kind?: string;
   status?: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }): string {
   const si = STATUS_ICONS[tool.status || ""] || "🔧";
-  const ki = KIND_ICONS[tool.kind || ""] || "🛠️";
-  let text = `${si} ${ki} <b>${escapeHtml(tool.name || "Tool")}</b>`;
+  const name = tool.name || "Tool";
+  const summary = formatToolSummary(name, tool.rawInput);
+  let text = `${si} <b>${escapeHtml(summary)}</b>`;
   text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
   if (!tool.viewerLinks) {
-    const details = extractContentText(tool.content);
+    const details = stripCodeFences(extractContentText(tool.content));
     if (details) {
       text += `\n<pre>${escapeHtml(truncateContent(details, 3800))}</pre>`;
     }
@@ -100,16 +106,17 @@ export function formatToolUpdate(update: {
   kind?: string;
   status: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }): string {
   const si = STATUS_ICONS[update.status] || "🔧";
-  const ki = KIND_ICONS[update.kind || ""] || "🛠️";
   const name = update.name || "Tool";
-  let text = `${si} ${ki} <b>${escapeHtml(name)}</b>`;
+  const summary = formatToolSummary(name, update.rawInput);
+  let text = `${si} <b>${escapeHtml(summary)}</b>`;
   text += formatViewerLinks(update.viewerLinks, update.viewerFilePath);
   if (!update.viewerLinks) {
-    const details = extractContentText(update.content);
+    const details = stripCodeFences(extractContentText(update.content));
     if (details) {
       text += `\n<pre>${escapeHtml(truncateContent(details, 3800))}</pre>`;
     }
@@ -215,7 +222,7 @@ export const telegramRenderer: MessageRenderer = {
   render(msg: FormattedMessage, _expanded: boolean): string {
     if (msg.style === "tool") {
       const detail = msg.detail
-        ? `\n<pre>${escapeHtml(truncateContent(msg.detail, 3800))}</pre>`
+        ? `\n<pre>${escapeHtml(truncateContent(stripCodeFences(msg.detail), 3800))}</pre>`
         : "";
       return `${escapeHtml(msg.summary)}${detail}`;
     }

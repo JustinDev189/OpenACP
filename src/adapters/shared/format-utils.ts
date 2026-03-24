@@ -7,6 +7,13 @@ export function formatTokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }
 
+export function stripCodeFences(text: string): string {
+  return text
+    .replace(/```\w*\n?/g, "")
+    .replace(/```$/gm, "")
+    .trim();
+}
+
 export function truncateContent(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen) + "\n… (truncated)";

@@ -9,6 +9,7 @@ interface ToolCallState {
   msgId: number;
   name: string;
   kind?: string;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
   ready: Promise<void>;
@@ -20,6 +21,7 @@ interface ToolCallMeta {
   kind?: string;
   status?: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }
@@ -51,21 +53,18 @@ export class ToolCallTracker {
       msgId: 0,
       name: meta.name,
       kind: meta.kind,
+      rawInput: meta.rawInput,
       viewerLinks: meta.viewerLinks,
       viewerFilePath: meta.viewerFilePath,
       ready,
     });
 
     const msg = await this.sendQueue.enqueue(() =>
-      this.bot.api.sendMessage(
-        this.chatId,
-        formatToolCall(meta),
-        {
-          message_thread_id: threadId,
-          parse_mode: "HTML",
-          disable_notification: true,
-        },
-      ),
+      this.bot.api.sendMessage(this.chatId, formatToolCall(meta), {
+        message_thread_id: threadId,
+        parse_mode: "HTML",
+        disable_notification: true,
+      }),
     );
 
     const toolEntry = this.sessions.get(sessionId)!.get(meta.id)!;
@@ -83,7 +82,10 @@ export class ToolCallTracker {
     // Accumulate state from intermediate updates
     if (meta.viewerLinks) {
       toolState.viewerLinks = meta.viewerLinks;
-      log.debug({ toolId: meta.id, viewerLinks: meta.viewerLinks }, "Accumulated viewerLinks");
+      log.debug(
+        { toolId: meta.id, viewerLinks: meta.viewerLinks },
+        "Accumulated viewerLinks",
+      );
     }
     if (meta.viewerFilePath) toolState.viewerFilePath = meta.viewerFilePath;
     if (meta.name) toolState.name = meta.name;
@@ -111,6 +113,7 @@ export class ToolCallTracker {
       ...meta,
       name: toolState.name,
       kind: toolState.kind,
+      rawInput: toolState.rawInput,
       viewerLinks: toolState.viewerLinks,
       viewerFilePath: toolState.viewerFilePath,
     };

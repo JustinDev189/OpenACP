@@ -40,13 +40,14 @@ import {
 import { escapeHtml } from "./formatting.js";
 import { ActivityTracker } from "./activity.js";
 import { TelegramSendQueue } from "./send-queue.js";
-import {
-  setupActionCallbacks,
-} from "./action-detect.js";
+import { setupActionCallbacks } from "./action-detect.js";
 import { ToolCallTracker } from "./tool-call-tracker.js";
 import { DraftManager } from "./draft-manager.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
-import { dispatchMessage, type MessageHandlers } from "../shared/message-dispatcher.js";
+import {
+  dispatchMessage,
+  type MessageHandlers,
+} from "../shared/message-dispatcher.js";
 
 interface TelegramMessageCtx {
   sessionId: string;
@@ -59,6 +60,7 @@ interface ToolCallMetadata {
   kind?: string;
   status?: string;
   content?: unknown;
+  rawInput?: unknown;
   viewerLinks?: { file?: string; diff?: string };
   viewerFilePath?: string;
 }
@@ -119,7 +121,10 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   private fileService!: FileService;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
 
-  private getOrCreateTracker(sessionId: string, threadId: number): ActivityTracker {
+  private getOrCreateTracker(
+    sessionId: string,
+    threadId: number,
+  ): ActivityTracker {
     let tracker = this.sessionTrackers.get(sessionId);
     if (!tracker) {
       tracker = new ActivityTracker(
@@ -148,8 +153,16 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     this.fileService = this.core.fileService;
 
     // Initialize extracted managers
-    this.toolTracker = new ToolCallTracker(this.bot, this.telegramConfig.chatId, this.sendQueue);
-    this.draftManager = new DraftManager(this.bot, this.telegramConfig.chatId, this.sendQueue);
+    this.toolTracker = new ToolCallTracker(
+      this.bot,
+      this.telegramConfig.chatId,
+      this.sendQueue,
+    );
+    this.draftManager = new DraftManager(
+      this.bot,
+      this.telegramConfig.chatId,
+      this.sendQueue,
+    );
     this.skillManager = new SkillCommandManager(
       this.bot,
       this.telegramConfig.chatId,
@@ -178,7 +191,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         const retryAfter =
           ((result as { parameters?: { retry_after?: number } }).parameters
             ?.retry_after ?? 5) + 1;
-        const rateLimitedMethods = ['sendMessage', 'editMessageText', 'editMessageReplyMarkup'];
+        const rateLimitedMethods = [
+          "sendMessage",
+          "editMessageText",
+          "editMessageReplyMarkup",
+        ];
         if (rateLimitedMethods.includes(method)) {
           this.sendQueue.onRateLimited();
         }
@@ -233,8 +250,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     this.permissionHandler = new PermissionHandler(
       this.bot,
       this.telegramConfig.chatId,
-      (sessionId) =>
-        this.core.sessionManager.getSession(sessionId),
+      (sessionId) => this.core.sessionManager.getSession(sessionId),
       (notification) => this.sendNotification(notification),
     );
 
@@ -252,7 +268,10 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       this.bot,
       this.core as OpenACPCore,
       this.telegramConfig.chatId,
-      { notificationTopicId: this.notificationTopicId, assistantTopicId: this.assistantTopicId },
+      {
+        notificationTopicId: this.notificationTopicId,
+        assistantTopicId: this.assistantTopicId,
+      },
       () => {
         if (!this.assistantSession) return undefined;
         return {
@@ -280,7 +299,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           );
           this.assistantSession = session;
           this.assistantInitializing = true;
-          ready.then(() => { this.assistantInitializing = false; });
+          ready.then(() => {
+            this.assistantInitializing = false;
+          });
         },
       },
     );
@@ -291,15 +312,26 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       const threadId = ctx.message?.message_thread_id;
       if (!threadId) return;
 
-      if (threadId === this.notificationTopicId || threadId === this.assistantTopicId) {
+      if (
+        threadId === this.notificationTopicId ||
+        threadId === this.assistantTopicId
+      ) {
         await ctx.reply("This command only works in session topics.", {
           message_thread_id: threadId,
         });
         return;
       }
 
-      const session = this.core.sessionManager.getSessionByThread("telegram", String(threadId));
-      const record = session ? undefined : this.core.sessionManager.getRecordByThread("telegram", String(threadId));
+      const session = this.core.sessionManager.getSessionByThread(
+        "telegram",
+        String(threadId),
+      );
+      const record = session
+        ? undefined
+        : this.core.sessionManager.getRecordByThread(
+            "telegram",
+            String(threadId),
+          );
 
       const agentName = session?.agentName ?? record?.agentName;
       const agentSessionId = session?.agentSessionId ?? record?.agentSessionId;
@@ -311,7 +343,8 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         return;
       }
 
-      const { getAgentCapabilities } = await import("../../core/agent-registry.js");
+      const { getAgentCapabilities } =
+        await import("../../core/agent-registry.js");
       const caps = getAgentCapabilities(agentName);
 
       if (!caps.supportsResume || !caps.resumeCommand) {
@@ -352,10 +385,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       const allRecords = this.core.sessionManager.listRecords();
 
       const welcomeText = buildWelcomeMessage({
-        activeCount: allRecords.filter(r => r.status === 'active' || r.status === 'initializing').length,
-        errorCount: allRecords.filter(r => r.status === 'error').length,
+        activeCount: allRecords.filter(
+          (r) => r.status === "active" || r.status === "initializing",
+        ).length,
+        errorCount: allRecords.filter((r) => r.status === "error").length,
         totalCount: allRecords.length,
-        agents: agents.map(a => a.name),
+        agents: agents.map((a) => a.name),
         defaultAgent: config.defaultAgent,
       });
 
@@ -378,18 +413,26 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       );
       this.assistantSession = session;
       this.assistantInitializing = true;
-      log.info({ sessionId: session.id }, "Assistant session ready, system prompt running in background");
+      log.info(
+        { sessionId: session.id },
+        "Assistant session ready, system prompt running in background",
+      );
       ready.then(() => {
         this.assistantInitializing = false;
-        log.info({ sessionId: session.id }, "Assistant ready for user messages");
+        log.info(
+          { sessionId: session.id },
+          "Assistant ready for user messages",
+        );
       });
     } catch (err) {
       log.error({ err }, "Failed to spawn assistant");
-      this.bot.api.sendMessage(
-        this.telegramConfig.chatId,
-        `⚠️ <b>Failed to start assistant session.</b>\n\n<code>${err instanceof Error ? err.message : String(err)}</code>`,
-        { message_thread_id: this.assistantTopicId, parse_mode: "HTML" },
-      ).catch(() => {});
+      this.bot.api
+        .sendMessage(
+          this.telegramConfig.chatId,
+          `⚠️ <b>Failed to start assistant session.</b>\n\n<code>${err instanceof Error ? err.message : String(err)}</code>`,
+          { message_thread_id: this.assistantTopicId, parse_mode: "HTML" },
+        )
+        .catch(() => {});
     }
   }
 
@@ -407,7 +450,14 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       const text = ctx.message.text;
 
       // Check for pending workspace input from interactive /new flow
-      if (await handlePendingWorkspaceInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
+      if (
+        await handlePendingWorkspaceInput(
+          ctx,
+          this.core,
+          this.telegramConfig.chatId,
+          this.assistantTopicId,
+        )
+      ) {
         return;
       }
 
@@ -432,10 +482,16 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       // Assistant topic → forward to assistant session
       if (threadId === this.assistantTopicId) {
         if (!this.assistantSession) {
-          await ctx.reply("⚠️ Assistant is not available yet. Please try again shortly.", { parse_mode: "HTML" });
+          await ctx.reply(
+            "⚠️ Assistant is not available yet. Please try again shortly.",
+            { parse_mode: "HTML" },
+          );
           return;
         }
-        await this.draftManager.finalize(this.assistantSession.id, this.assistantSession.id);
+        await this.draftManager.finalize(
+          this.assistantSession.id,
+          this.assistantSession.id,
+        );
         ctx.replyWithChatAction("typing").catch(() => {});
         handleAssistantMessage(this.assistantSession, forwardText).catch(
           (err) => log.error({ err }, "Assistant error"),
@@ -444,8 +500,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       }
 
       // Session topic → forward to core
-      const sessionId = this.core.sessionManager.getSessionByThread("telegram", String(threadId))?.id;
-      if (sessionId) await this.draftManager.finalize(sessionId, this.assistantSession?.id);
+      const sessionId = this.core.sessionManager.getSessionByThread(
+        "telegram",
+        String(threadId),
+      )?.id;
+      if (sessionId)
+        await this.draftManager.finalize(sessionId, this.assistantSession?.id);
       if (sessionId) {
         const tracker = this.sessionTrackers.get(sessionId);
         if (tracker) await tracker.onNewPrompt();
@@ -471,8 +531,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       const largest = photos[photos.length - 1];
       const ext = ".jpg";
       await this.handleIncomingMedia(
-        threadId, ctx.from.id, largest.file_id,
-        `photo${ext}`, "image/jpeg", ctx.message.caption || undefined,
+        threadId,
+        ctx.from.id,
+        largest.file_id,
+        `photo${ext}`,
+        "image/jpeg",
+        ctx.message.caption || undefined,
       );
     });
 
@@ -482,8 +546,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       const doc = ctx.message.document;
       await this.handleIncomingMedia(
-        threadId, ctx.from.id, doc.file_id,
-        doc.file_name || "document", doc.mime_type || "application/octet-stream",
+        threadId,
+        ctx.from.id,
+        doc.file_id,
+        doc.file_name || "document",
+        doc.mime_type || "application/octet-stream",
         ctx.message.caption || undefined,
       );
     });
@@ -494,9 +561,13 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       const voice = ctx.message.voice;
       await this.handleIncomingMedia(
-        threadId, ctx.from.id, voice.file_id,
-        "voice.wav", "audio/wav",
-        undefined, true,
+        threadId,
+        ctx.from.id,
+        voice.file_id,
+        "voice.wav",
+        "audio/wav",
+        undefined,
+        true,
       );
     });
 
@@ -506,8 +577,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       const audio = ctx.message.audio;
       await this.handleIncomingMedia(
-        threadId, ctx.from.id, audio.file_id,
-        audio.file_name || "audio.mp3", audio.mime_type || "audio/mpeg",
+        threadId,
+        ctx.from.id,
+        audio.file_id,
+        audio.file_name || "audio.mp3",
+        audio.mime_type || "audio/mpeg",
         ctx.message.caption || undefined,
       );
     });
@@ -518,8 +592,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       const videoNote = ctx.message.video_note;
       await this.handleIncomingMedia(
-        threadId, ctx.from.id, videoNote.file_id,
-        "video_note.mp4", "video/mp4",
+        threadId,
+        ctx.from.id,
+        videoNote.file_id,
+        "video_note.mp4",
+        "video/mp4",
       );
     });
   }
@@ -549,7 +626,10 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     onToolCall: async (ctx, content) => {
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.threadId);
       await tracker.onToolCall();
-      await this.draftManager.finalize(ctx.sessionId, this.assistantSession?.id);
+      await this.draftManager.finalize(
+        ctx.sessionId,
+        this.assistantSession?.id,
+      );
       const meta = content.metadata as ToolCallMetadata | undefined;
       await this.toolTracker.trackNewCall(ctx.sessionId, ctx.threadId, {
         ...meta!,
@@ -567,38 +647,48 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       const meta = content.metadata as PlanMetadata | undefined;
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.threadId);
       await tracker.onPlan(
-        meta!.entries.map(e => ({
+        meta!.entries.map((e) => ({
           content: e.content,
-          status: e.status as 'pending' | 'in_progress' | 'completed',
-          priority: (e.priority ?? 'medium') as 'high' | 'medium' | 'low',
+          status: e.status as "pending" | "in_progress" | "completed",
+          priority: (e.priority ?? "medium") as "high" | "medium" | "low",
         })),
       );
     },
 
     onUsage: async (ctx, content) => {
       const meta = content.metadata as UsageMetadata | undefined;
-      await this.draftManager.finalize(ctx.sessionId, this.assistantSession?.id);
+      await this.draftManager.finalize(
+        ctx.sessionId,
+        this.assistantSession?.id,
+      );
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.threadId);
       await tracker.sendUsage(meta ?? {});
 
       // Notify the Notifications topic that a prompt has completed
-      if (this.notificationTopicId && ctx.sessionId !== this.assistantSession?.id) {
+      if (
+        this.notificationTopicId &&
+        ctx.sessionId !== this.assistantSession?.id
+      ) {
         const sess = this.core.sessionManager.getSession(ctx.sessionId);
-        const sessionName = sess?.name || 'Session';
+        const sessionName = sess?.name || "Session";
         const chatIdStr = String(this.telegramConfig.chatId);
-        const numericId = chatIdStr.startsWith('-100') ? chatIdStr.slice(4) : chatIdStr.replace('-', '');
+        const numericId = chatIdStr.startsWith("-100")
+          ? chatIdStr.slice(4)
+          : chatIdStr.replace("-", "");
         const usageMsgId = tracker.getUsageMsgId();
         const deepLink = usageMsgId
           ? `https://t.me/c/${numericId}/${ctx.threadId}/${usageMsgId}`
           : `https://t.me/c/${numericId}/${ctx.threadId}`;
         const text = `✅ <b>${escapeHtml(sessionName)}</b>\nTask completed.\n\n<a href="${deepLink}">→ Go to topic</a>`;
-        this.sendQueue.enqueue(() =>
-          this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
-            message_thread_id: this.notificationTopicId,
-            parse_mode: 'HTML',
-            disable_notification: false,
-          }),
-        ).catch(() => {});
+        this.sendQueue
+          .enqueue(() =>
+            this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
+              message_thread_id: this.notificationTopicId,
+              parse_mode: "HTML",
+              disable_notification: false,
+            }),
+          )
+          .catch(() => {});
       }
     },
 
@@ -608,7 +698,14 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       // Telegram bot API upload limit: 50MB
       if (attachment.size > 50 * 1024 * 1024) {
-        log.warn({ sessionId: ctx.sessionId, fileName: attachment.fileName, size: attachment.size }, "File too large for Telegram (>50MB)");
+        log.warn(
+          {
+            sessionId: ctx.sessionId,
+            fileName: attachment.fileName,
+            size: attachment.size,
+          },
+          "File too large for Telegram (>50MB)",
+        );
         await this.sendQueue.enqueue(() =>
           this.bot.api.sendMessage(
             this.telegramConfig.chatId,
@@ -646,12 +743,18 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           );
         }
       } catch (err) {
-        log.error({ err, sessionId: ctx.sessionId, fileName: attachment.fileName }, "Failed to send attachment");
+        log.error(
+          { err, sessionId: ctx.sessionId, fileName: attachment.fileName },
+          "Failed to send attachment",
+        );
       }
     },
 
     onSessionEnd: async (ctx, _content) => {
-      await this.draftManager.finalize(ctx.sessionId, this.assistantSession?.id);
+      await this.draftManager.finalize(
+        ctx.sessionId,
+        this.assistantSession?.id,
+      );
       this.draftManager.cleanup(ctx.sessionId);
       this.toolTracker.cleanup(ctx.sessionId);
       await this.skillManager.cleanup(ctx.sessionId);
@@ -676,7 +779,10 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     },
 
     onError: async (ctx, content) => {
-      await this.draftManager.finalize(ctx.sessionId, this.assistantSession?.id);
+      await this.draftManager.finalize(
+        ctx.sessionId,
+        this.assistantSession?.id,
+      );
       const tracker = this.sessionTrackers.get(ctx.sessionId);
       if (tracker) {
         tracker.destroy();
@@ -717,7 +823,8 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     content: OutgoingMessage,
   ): Promise<void> {
     // Suppress assistant messages during system prompt
-    if (this.assistantInitializing && sessionId === this.assistantSession?.id) return;
+    if (this.assistantInitializing && sessionId === this.assistantSession?.id)
+      return;
 
     const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -726,7 +833,10 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     if (session.archiving) return;
     const threadId = Number(session.threadId);
     if (!threadId || isNaN(threadId)) {
-      log.warn({ sessionId, threadId: session.threadId }, "Session has no valid threadId, skipping message");
+      log.warn(
+        { sessionId, threadId: session.threadId },
+        "Session has no valid threadId, skipping message",
+      );
       return;
     }
 
@@ -764,14 +874,20 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     let text = `${emoji[notification.type] || "ℹ️"} <b>${escapeHtml(notification.sessionName || "New session")}</b>\n`;
     text += escapeHtml(notification.summary);
 
-    const deepLink = notification.deepLink ?? (() => {
-      const session = this.core.sessionManager.getSession(notification.sessionId);
-      const threadId = session?.threadId;
-      if (!threadId) return undefined;
-      const chatIdStr = String(this.telegramConfig.chatId);
-      const numericId = chatIdStr.startsWith("-100") ? chatIdStr.slice(4) : chatIdStr.replace("-", "");
-      return `https://t.me/c/${numericId}/${threadId}`;
-    })();
+    const deepLink =
+      notification.deepLink ??
+      (() => {
+        const session = this.core.sessionManager.getSession(
+          notification.sessionId,
+        );
+        const threadId = session?.threadId;
+        if (!threadId) return undefined;
+        const chatIdStr = String(this.telegramConfig.chatId);
+        const numericId = chatIdStr.startsWith("-100")
+          ? chatIdStr.slice(4)
+          : chatIdStr.replace("-", "");
+        return `https://t.me/c/${numericId}/${threadId}`;
+      })();
 
     if (deepLink) {
       text += `\n\n<a href="${deepLink}">→ Go to topic</a>`;
@@ -806,14 +922,19 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
   async deleteSessionThread(sessionId: string): Promise<void> {
     const record = this.core.sessionManager.getSessionRecord(sessionId);
-    const platform = record?.platform as import("../../core/types.js").TelegramPlatformData | undefined;
+    const platform = record?.platform as
+      | import("../../core/types.js").TelegramPlatformData
+      | undefined;
     const topicId = platform?.topicId;
     if (!topicId) return;
 
     try {
       await this.bot.api.deleteForumTopic(this.telegramConfig.chatId, topicId);
     } catch (err) {
-      log.warn({ err, sessionId, topicId }, "Failed to delete forum topic (may already be deleted)");
+      log.warn(
+        { err, sessionId, topicId },
+        "Failed to delete forum topic (may already be deleted)",
+      );
     }
   }
 
@@ -832,10 +953,15 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   }
 
   private resolveSessionId(threadId: number): string | undefined {
-    return this.core.sessionManager.getSessionByThread("telegram", String(threadId))?.id;
+    return this.core.sessionManager.getSessionByThread(
+      "telegram",
+      String(threadId),
+    )?.id;
   }
 
-  private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; filePath: string } | null> {
+  private async downloadTelegramFile(
+    fileId: string,
+  ): Promise<{ buffer: Buffer; filePath: string } | null> {
     try {
       const file = await this.bot.api.getFile(fileId);
       if (!file.file_path) return null;
@@ -868,7 +994,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
     if (convertOggToWav) {
       // Save original OGG for STT (smaller, API-compatible)
-      const oggAtt = await this.fileService.saveFile(sessionId, "voice.ogg", downloaded.buffer, "audio/ogg");
+      const oggAtt = await this.fileService.saveFile(
+        sessionId,
+        "voice.ogg",
+        downloaded.buffer,
+        "audio/ogg",
+      );
       originalFilePath = oggAtt.filePath;
 
       try {
@@ -881,12 +1012,19 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       }
     }
 
-    const att = await this.fileService.saveFile(sessionId, fileName, buffer, mimeType);
+    const att = await this.fileService.saveFile(
+      sessionId,
+      fileName,
+      buffer,
+      mimeType,
+    );
     if (originalFilePath) {
       att.originalFilePath = originalFilePath;
     }
 
-    const rawText = caption || `[${att.type === "image" ? "Photo" : att.type === "audio" ? "Audio" : "File"}: ${att.fileName}]`;
+    const rawText =
+      caption ||
+      `[${att.type === "image" ? "Photo" : att.type === "audio" ? "Audio" : "File"}: ${att.fileName}]`;
     const text = rawText.startsWith("/") ? rawText.slice(1) : rawText;
 
     // Assistant topic
@@ -915,7 +1053,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     await this.skillManager.cleanup(sessionId);
   }
 
-  async archiveSessionTopic(sessionId: string): Promise<{ newThreadId: string } | null> {
+  async archiveSessionTopic(
+    sessionId: string,
+  ): Promise<{ newThreadId: string } | null> {
     const core = this.core as OpenACPCore;
     const session = core.sessionManager.getSession(sessionId);
     if (!session) return null;
@@ -923,7 +1063,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     const chatId = this.telegramConfig.chatId;
     const oldTopicId = Number(session.threadId);
     // Strip existing 🔄 prefix to avoid stacking on repeated archives
-    const rawName = (session.name || `Session ${session.id.slice(0, 6)}`).replace(/^🔄\s*/, "");
+    const rawName = (
+      session.name || `Session ${session.id.slice(0, 6)}`
+    ).replace(/^🔄\s*/, "");
 
     // 1. Set archiving flag — sendMessage will skip while this is true
     session.archiving = true;
