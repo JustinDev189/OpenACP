@@ -25,6 +25,7 @@ export class MessageTransformer {
           status: event.status,
           content: event.content,
           locations: event.locations,
+          rawInput: event.rawInput,
         };
         this.enrichWithViewerLinks(event, metadata, sessionContext);
         return { type: "tool_call", text: event.name, metadata };
@@ -36,6 +37,7 @@ export class MessageTransformer {
           kind: event.kind,
           status: event.status,
           content: event.content,
+          rawInput: event.rawInput,
         };
         this.enrichWithViewerLinks(event, metadata, sessionContext);
         return { type: "tool_update", text: "", metadata };
