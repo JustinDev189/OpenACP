@@ -25,11 +25,11 @@ export class SlackEventRouter implements ISlackEventRouter {
     private botUserId: string,
     private notificationChannelId: string | undefined,
     private onNewSession: NewSessionCallback,
-    private config?: SlackChannelConfig,
+    private config: SlackChannelConfig,
   ) {}
 
   private isAllowedUser(userId: string): boolean {
-    const allowed = this.config?.allowedUserIds ?? [];
+    const allowed = this.config.allowedUserIds ?? [];
     if (allowed.length === 0) return true;
     return allowed.includes(userId);
   }
