@@ -356,7 +356,11 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     if (content.type === "session_end" || content.type === "error") {
       const buf = this.textBuffers.get(sessionId);
       if (buf) {
-        await buf.flush();
+        try {
+          await buf.flush();
+        } catch (err) {
+          log.warn({ err, sessionId }, "Flush failed on session_end");
+        }
         buf.destroy();
         this.textBuffers.delete(sessionId);
       }
