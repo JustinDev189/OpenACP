@@ -5,6 +5,22 @@ import type { SlackChannelConfig } from "./types.js";
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "slack-event-router" });
 
+/** Subset of Bolt's message event fields used by the router */
+interface SlackMessageEvent {
+  bot_id?: string;
+  subtype?: string;
+  channel: string;
+  text?: string;
+  user?: string;
+  files?: Array<{
+    id: string;
+    name: string;
+    mimetype: string;
+    size: number;
+    url_private: string;
+  }>;
+}
+
 // Callback to look up which session (if any) owns a Slack channelId
 export type SessionLookup = (channelId: string) => SlackSessionMeta | undefined;
 
@@ -38,16 +54,17 @@ export class SlackEventRouter implements ISlackEventRouter {
     app.message(async ({ message }) => {
       log.debug({ message }, "Slack raw message event");
 
-      // Ignore bot messages (including our own)
-      if ((message as any).bot_id) return;
-      const subtype = (message as any).subtype;
+      const msg = message as unknown as SlackMessageEvent;
+
+      if (msg.bot_id) return;
+      const subtype = msg.subtype;
       if (subtype && subtype !== "file_share") return;  // edited, deleted, etc.
 
-      const channelId = (message as any).channel as string;
-      const text: string = (message as any).text ?? "";
-      const userId: string = (message as any).user ?? "";
+      const channelId = msg.channel;
+      const text: string = msg.text ?? "";
+      const userId: string = msg.user ?? "";
 
-      const files: SlackFileInfo[] | undefined = (message as any).files?.map((f: any) => ({
+      const files: SlackFileInfo[] | undefined = msg.files?.map((f) => ({
         id: f.id,
         name: f.name,
         mimetype: f.mimetype,
