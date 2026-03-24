@@ -170,6 +170,12 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
         log.warn({ status: resp.status }, "Failed to download Slack file");
         return null;
       }
+      // Slack returns 200 with HTML login page if bot lacks files:read scope
+      const contentType = resp.headers.get("content-type") ?? "";
+      if (contentType.includes("text/html")) {
+        log.warn("Slack file download returned HTML instead of binary — bot likely missing files:read scope. Reinstall the Slack app with files:read scope.");
+        return null;
+      }
       return Buffer.from(await resp.arrayBuffer());
     } catch (err) {
       log.error({ err }, "Error downloading Slack file");
