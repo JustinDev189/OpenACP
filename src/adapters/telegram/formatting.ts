@@ -200,7 +200,6 @@ export function splitMessage(text: string, maxLength = 3800): string[] {
   return sharedSplitMessage(text, maxLength);
 }
 
-// TODO: Wire into adapter pipeline to replace direct formatToolCall/formatToolUpdate calls
 export const telegramRenderer: MessageRenderer = {
   render(msg: FormattedMessage, _expanded: boolean): string {
     if (msg.style === "tool") {

@@ -79,7 +79,6 @@ export function splitMessage(text: string, maxLength = 1800): string[] {
   return sharedSplitMessage(text, maxLength);
 }
 
-// TODO: Wire into adapter pipeline to replace direct formatToolCall/formatToolUpdate calls
 export const discordRenderer: MessageRenderer = {
   render(msg: FormattedMessage, _expanded: boolean): string {
     if (msg.style === "tool") {
