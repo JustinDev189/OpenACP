@@ -1,0 +1,136 @@
+name: Telegram Notifications
+
+on:
+  push:
+    tags-ignore: ["**"]
+  pull_request_target:
+    types: [opened, closed, reopened]
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+
+jobs:
+  notify-push:
+    name: Push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build commit list
+        id: commits
+        env:
+          COMMITS_JSON: ${{ toJSON(github.event.commits) }}
+        run: |
+          DELIMITER=$(openssl rand -hex 16)
+          COMMITS=""
+          for row in $(echo "$COMMITS_JSON" | jq -r '.[] | @base64'); do
+            MSG=$(echo "$row" | base64 -d | jq -r '.message' | head -1)
+            AUTHOR=$(echo "$row" | base64 -d | jq -r '.author.username')
+            SHORT=$(echo "$row" | base64 -d | jq -r '.id' | cut -c1-7)
+            COMMITS="${COMMITS}• <code>${SHORT}</code> ${MSG} — ${AUTHOR}"$'\n'
+          done
+          {
+            echo "list<<${DELIMITER}"
+            echo "$COMMITS"
+            echo "${DELIMITER}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -z "$COMMITS" ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send notification
+        if: steps.commits.outputs.empty != 'true'
+        uses: appleboy/telegram-action@v1
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          format: html
+          disable_web_page_preview: true
+          message: |
+            🔀 <b>Push to ${{ github.ref_name }}</b>
+
+            ${{ steps.commits.outputs.list }}
+            <a href="${{ github.event.compare }}">View changes</a>
+
+  notify-pr:
+    name: Pull Request
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set PR status
+        id: status
+        env:
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          if [ "$ACTION" = "closed" ] && [ "$MERGED" = "true" ]; then
+            echo "emoji=✅" >> "$GITHUB_OUTPUT"
+            echo "text=merged" >> "$GITHUB_OUTPUT"
+          elif [ "$ACTION" = "closed" ]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"
+            echo "text=closed" >> "$GITHUB_OUTPUT"
+          elif [ "$ACTION" = "reopened" ]; then
+            echo "emoji=🔄" >> "$GITHUB_OUTPUT"
+            echo "text=reopened" >> "$GITHUB_OUTPUT"
+          else
+            echo "emoji=📬" >> "$GITHUB_OUTPUT"
+            echo "text=opened" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send notification
+        uses: appleboy/telegram-action@v1
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          format: html
+          disable_web_page_preview: true
+          message: |
+            ${{ steps.status.outputs.emoji }} <b>PR #${{ github.event.pull_request.number }} ${{ steps.status.outputs.text }}</b>
+
+            <a href="${{ github.event.pull_request.html_url }}">${{ github.event.pull_request.title }}</a>
+            by ${{ github.event.pull_request.user.login }}
+
+  notify-release:
+    name: Release published
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification
+        uses: appleboy/telegram-action@v1
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          format: html
+          disable_web_page_preview: true
+          message: |
+            🚀 <b>Release ${{ github.event.release.tag_name }}</b>
+
+            ${{ github.event.release.name }}
+
+            <a href="${{ github.event.release.html_url }}">View release</a>
+
+  notify-ci-failure:
+    name: CI failure
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification
+        uses: appleboy/telegram-action@v1
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message_thread_id: ${{ secrets.TELEGRAM_TOPIC_ID }}
+          format: html
+          disable_web_page_preview: true
+          message: |
+            🔴 <b>CI Failed: ${{ github.event.workflow_run.name }}</b>
+
+            Branch: <code>${{ github.event.workflow_run.head_branch }}</code>
+            Triggered by: ${{ github.event.workflow_run.actor.login }}
+
+            <a href="${{ github.event.workflow_run.html_url }}">View run</a>

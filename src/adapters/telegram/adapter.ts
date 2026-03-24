@@ -588,7 +588,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         const chatIdStr = String(this.telegramConfig.chatId);
         const numericId = chatIdStr.startsWith('-100') ? chatIdStr.slice(4) : chatIdStr.replace('-', '');
         const usageMsgId = tracker.getUsageMsgId();
-        const deepLink = `https://t.me/c/${numericId}/${usageMsgId ?? ctx.threadId}`;
+        const deepLink = usageMsgId
+          ? `https://t.me/c/${numericId}/${ctx.threadId}/${usageMsgId}`
+          : `https://t.me/c/${numericId}/${ctx.threadId}`;
         const text = `✅ <b>${escapeHtml(sessionName)}</b>\nTask completed.\n\n<a href="${deepLink}">→ Go to topic</a>`;
         this.sendQueue.enqueue(() =>
           this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
