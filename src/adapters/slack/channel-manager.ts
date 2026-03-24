@@ -17,13 +17,27 @@ export class SlackChannelManager implements ISlackChannelManager {
   ) {}
 
   async createChannel(sessionId: string, sessionName: string): Promise<SlackSessionMeta> {
-    const slug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
+    let finalSlug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
 
-    const res = await this.queue.enqueue<{ channel: { id: string } }>(
-      "conversations.create",
-      { name: slug, is_private: true }
-    );
-    const channelId = res.channel.id;
+    let channelId: string;
+    try {
+      const res = await this.queue.enqueue<{ channel: { id: string } }>(
+        "conversations.create",
+        { name: finalSlug, is_private: true }
+      );
+      channelId = res.channel.id;
+    } catch (err: any) {
+      if (err?.data?.error === "name_taken") {
+        finalSlug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
+        const res = await this.queue.enqueue<{ channel: { id: string } }>(
+          "conversations.create",
+          { name: finalSlug, is_private: true }
+        );
+        channelId = res.channel.id;
+      } else {
+        throw err;
+      }
+    }
 
     // Bot is automatically a member of private channels it creates — no join/invite needed.
     // Invite configured users so they can access the channel.
@@ -35,7 +49,7 @@ export class SlackChannelManager implements ISlackChannelManager {
       });
     }
 
-    return { channelId, channelSlug: slug };
+    return { channelId, channelSlug: finalSlug };
   }
 
   async archiveChannel(channelId: string): Promise<void> {
