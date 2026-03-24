@@ -41,24 +41,40 @@ Keep this token in a secure location.
 2. Scroll to **Bot Token Scopes**
 3. Click **Add an OAuth Scope** and add these scopes:
    - `channels:manage` — create and archive public channels
-   - `chat:write` — post messages to channels
-   - `chat:write.public` — post in channels without joining first
+   - `channels:history` — **required** to receive message events from public channels
    - `channels:join` — join channels when needed
    - `channels:read` — list and inspect channels
-   - `groups:write` — manage private channels (optional, for private channel support)
+   - `chat:write` — post messages to channels
+   - `chat:write.public` — post in channels without joining first
+   - `groups:write` — manage private channels
+   - `groups:history` — **required** to receive message events from private channels
+   - `groups:read` — list private channels
+
+> **Important:** Without `channels:history` and `groups:history`, the bot will join channels and receive events via Socket Mode but will silently drop all incoming messages — no errors, no logs. These scopes are required for the bot to receive `message` events.
+
+## Subscribe to Bot Events
+
+After configuring scopes, subscribe to the message events the bot needs to receive:
+
+1. Go to **Event Subscriptions** (left sidebar)
+2. Toggle **Enable Events** to On
+3. Scroll to **Subscribe to bot events**
+4. Click **Add Bot User Event** and add:
+   - `message.channels` — receive messages from public channels the bot is in
+   - `message.groups` — receive messages from private channels the bot is in
+5. Click **Save Changes**
+6. Re-install the app to your workspace (**Install App** → **Reinstall to Workspace**) so the new scopes and events take effect
+
+> **Note:** In Socket Mode, event subscriptions work over the WebSocket connection — no public URL needed. But you still must add the events here for Slack to deliver them to your app.
 
 ## Enable Interactivity
 
-Permission buttons require interactivity to be enabled.
+Permission buttons (Allow / Deny) require interactivity to be enabled.
 
 1. Go to **Interactivity & Shortcuts** (left sidebar)
 2. Toggle **Interactivity** to On
-3. Set **Request URL** to your OpenACP server (e.g., `https://your-server.com/slack/interactions`)
-   - If running locally, you'll need to expose it via ngrok or similar tunnel
-   - Format: `https://your-domain/slack/interactions`
+3. In Socket Mode, Slack routes interactive payloads over the same WebSocket — **no Request URL is needed**. You can leave the Request URL field blank or set a placeholder.
 4. Save changes
-
-Note: If you don't have a public URL yet, you can enable this after setting up Socket Mode and running OpenACP locally.
 
 ## Install App to Workspace
 
@@ -199,6 +215,14 @@ Each OpenACP session in Slack gets its own dedicated channel, enabling isolated 
 7. The channel is archived automatically for later reference
 
 ## Troubleshooting
+
+### Messages sent by users are completely ignored (no response, no logs)
+
+1. **Missing `channels:history` or `groups:history` scope** — Without these, Slack does not deliver `message` events to the bot even in Socket Mode. Go to **OAuth & Permissions → Bot Token Scopes** and add both. Then reinstall the app.
+
+2. **Missing event subscriptions** — Go to **Event Subscriptions → Subscribe to bot events** and confirm `message.channels` and `message.groups` are listed. Add them if missing, then reinstall.
+
+3. **App not reinstalled after changes** — Slack requires a workspace reinstall for new scopes and events to take effect. Go to **Install App → Reinstall to Workspace**.
 
 ### "Bot is not a member of the channel"
 

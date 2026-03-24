@@ -523,6 +523,113 @@ if (config.channels.slack?.enabled) {
 
 ---
 
+## Post-Implementation Issues (from Code Review)
+
+Issues identified during code review of PR #42 that must be fixed before merge.
+
+### Issue 1: `onNewSession` callback is a no-op
+
+**Location:** `adapter.ts` — EventRouter construction
+**Problem:** When a user messages the notification channel, the `onNewSession` callback is `() => {}` — the message is silently dropped. User gets no feedback.
+**Fix:** Reply to the user in the notification channel with instructions on how to start a session (e.g., "Use `/openacp-new` to start a session").
+
+### Issue 2: `markdownToMrkdwn` bold/italic ordering bug
+
+**Location:** `formatter.ts:markdownToMrkdwn`
+**Problem:** Bold runs first — `**bold**` → `*bold*`. The italic regex can then match `*bold*` → `_bold_`, turning bold text into italic.
+**Fix:** Use placeholder tokens for bold before running italic conversion:
+```typescript
+export function markdownToMrkdwn(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    .replace(/\*\*(.+?)\*\*/g, "\x00BOLD\x00$1\x00BOLD\x00")  // placeholder
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "_$1_")   // italic (won't match placeholder)
+    .replace(/\x00BOLD\x00(.+?)\x00BOLD\x00/g, "*$1*")         // restore bold
+    .replace(/~~(.+?)~~/g, "~$1~")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "<$2|$1>")
+    .replace(/^[ \t]*[-*]\s+/gm, "• ")
+    .trim();
+}
+```
+
+### Issue 3: `adoptSession` hardcodes `Number(session.threadId)` for Slack
+
+**Location:** `core.ts:adoptSession`
+**Problem:** `platform: { topicId: Number(session.threadId) }` — Slack threadIds are channel slugs (strings), so this stores `NaN`.
+**Fix:** Core should not cast to Number. Store threadId as-is:
+```typescript
+platform: { topicId: session.threadId },
+```
+Note: This requires verifying that Telegram's existing `topicId` handling still works (Telegram uses numeric topic IDs). The field type should be `string | number`.
+
+### Issue 4: `renameSessionThread` reimplements slug logic without nanoid suffix
+
+**Location:** `adapter.ts:renameSessionThread`
+**Problem:** Inline slug conversion instead of `toSlug()`. Missing nanoid suffix → renamed channels can collide.
+**Fix:** Use `toSlug(newName, this.slackConfig.channelPrefix)` directly.
+
+### Issue 5: Race condition — `botUserId` may be empty
+
+**Location:** `adapter.ts:start()`
+**Problem:** If `auth.test` fails, `botUserId = ""` and only a warning is logged. `EventRouter` captures this empty value. Without a valid `botUserId`, the bot cannot filter its own messages → infinite message loop.
+**Fix:** Throw instead of warn — this is a hard requirement:
+```typescript
+const authResult = await this.webClient.auth.test();
+if (!authResult.user_id) {
+  throw new Error("Slack auth.test() did not return user_id — check botToken");
+}
+this.botUserId = authResult.user_id as string;
+```
+
+### Issue 6: `allowedUserIds` defined in config but not enforced
+
+**Location:** `event-router.ts`
+**Problem:** `SlackChannelConfigSchema` has `allowedUserIds` but `SlackEventRouter` does not check it. Any Slack user can send messages.
+**Fix:** Add `isAllowedUser` check in `SlackEventRouter.register()` before routing messages:
+```typescript
+private isAllowedUser(userId: string): boolean {
+  const allowed = this.config.allowedUserIds ?? [];
+  if (allowed.length === 0) return true;
+  return allowed.includes(userId);
+}
+```
+
+### Issue 7: `SlackTextBuffer` data loss on concurrent flush
+
+**Location:** `text-buffer.ts:flush()`
+**Problem:** `buffer` is cleared (`this.buffer = ""`) before flush completes. If `append()` is called during flush, that text is captured in a cleared buffer — then the early-return guard (`if (this.flushing) return`) on the next flush silently drops it.
+**Fix:** Capture buffer content into a local variable before clearing, and queue a re-flush if content arrived during flush:
+```typescript
+async flush(): Promise<void> {
+  if (this.flushing) return;
+  const text = this.buffer.trim();
+  if (!text) return;
+  this.buffer = "";
+  if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+
+  this.flushing = true;
+  try {
+    // ... post to Slack
+  } finally {
+    this.flushing = false;
+    // Re-flush if content arrived during flush
+    if (this.buffer.trim()) {
+      await this.flush();
+    }
+  }
+}
+```
+
+### Minor issues
+
+- **File header comment wrong:** `adapter.ts` line 1 says `// src/adapters/slack/index.ts` — fix to `adapter.ts`
+- **`config as never` type cast:** Constructor uses `super(core, config as never)` — fix the generic type parameter instead
+- **`splitSafe` duplicated:** Exists in both `formatter.ts` and `text-buffer.ts` — extract to a shared `utils.ts`
+- **Missing `index.ts` barrel export** — add to match Telegram adapter pattern
+- **Missing tests** for `markdownToMrkdwn` regex and `SlackTextBuffer` concurrent flush
+
+---
+
 ## Known Constraints & Mitigations
 
 ### Channel archiving — not deletion
@@ -612,7 +719,7 @@ And these app-level token scopes (for Socket Mode):
 | `src/core/config.ts` | **Minor** | +`SlackChannelConfigSchema` (~20 lines) |
 | `src/main.ts` | **Minor** | +Slack adapter registration (~20 lines) |
 | `src/core/channel.ts` | **No change** | Abstract base unchanged |
-| `src/core/core.ts` | **No change** | |
+| `src/core/core.ts` | **Minor fix** | `adoptSession`: store `threadId` as string, not `Number(threadId)` |
 | `src/core/session.ts` | **No change** | |
 | `src/adapters/telegram/` | **No change** | |
 

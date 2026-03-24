@@ -155,12 +155,15 @@ git commit -m "feat(slack): add SlackSessionMeta types and channel slug utility"
 
 ---
 
-## Task 3: SlackFormatter — Block Kit
+## Task 3: SlackFormatter + SlackTextBuffer — Block Kit + streaming buffer
 
 **Files:**
 - New: `src/adapters/slack/formatter.ts`
+- New: `src/adapters/slack/text-buffer.ts`
 
 - [ ] **Step 1: Create the ISlackFormatter interface and SlackFormatter class**
+
+> **Note:** AI agent responses stream as many small text chunks. Posting each chunk as a separate Slack message creates a very poor UX. `SlackTextBuffer` accumulates chunks per session and flushes them as a single message after a 2-second idle timeout (or immediately on `session_end`). `markdownToMrkdwn` converts standard markdown from AI responses (headers, bold, lists, links) into Slack mrkdwn format before sending.
 
 ```typescript
 // src/adapters/slack/formatter.ts
@@ -283,7 +286,47 @@ export class SlackFormatter implements ISlackFormatter {
 }
 ```
 
-- [ ] **Step 2: Build**
+- [ ] **Step 2: Add `markdownToMrkdwn` converter to formatter.ts**
+
+Converts AI markdown to Slack mrkdwn before posting:
+
+```typescript
+export function markdownToMrkdwn(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")          // ## Header → *Header*
+    .replace(/\*\*(.+?)\*\*/g, "*$1*")               // **bold** → *bold*
+    .replace(/~~(.+?)~~/g, "~$1~")                   // ~~strike~~ → ~strike~
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "<$2|$1>")  // [text](url) → <url|text>
+    .replace(/^[ \t]*[-*]\s+/gm, "• ")              // - item → • item
+    .trim();
+}
+```
+
+Apply in `formatOutgoing` for `type: "text"` — skip posting if text is empty after trimming (avoids `invalid_blocks` error from Slack API).
+
+- [ ] **Step 3: Create `src/adapters/slack/text-buffer.ts`**
+
+```typescript
+// Buffers streamed text chunks per session, flushes as a single Slack message.
+export class SlackTextBuffer {
+  private buffer = "";
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(
+    private channelId: string,
+    private sessionId: string,
+    private queue: ISlackSendQueue,
+  ) {}
+
+  append(text: string): void { /* accumulate + reset 2s timer */ }
+  async flush(): Promise<void> { /* convert + post buffered text */ }
+  destroy(): void { /* clear timer + buffer on session cleanup */ }
+}
+```
+
+`SlackAdapter.sendMessage()` routes `type: "text"` through `SlackTextBuffer.append()` instead of posting immediately. On `type: "session_end"` or `type: "error"`, flush and destroy the buffer first.
+
+- [ ] **Step 4: Build**
 
 ```bash
 pnpm build
@@ -291,11 +334,11 @@ pnpm build
 
 Expected: No type errors.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/adapters/slack/formatter.ts
-git commit -m "feat(slack): add SlackFormatter with Block Kit output for all OutgoingMessage types"
+git add src/adapters/slack/formatter.ts src/adapters/slack/text-buffer.ts
+git commit -m "feat(slack): add SlackFormatter with Block Kit output and SlackTextBuffer for streaming"
 ```
 
 ---
@@ -909,9 +952,14 @@ import type { ConfigManager } from "../../core/config.js";
 
 const REQUIRED_BOT_SCOPES = [
   "channels:manage",
+  "channels:history",   // required to receive message events from public channels
+  "channels:join",
+  "channels:read",
   "groups:write",
+  "groups:history",     // required to receive message events from private channels
   "groups:read",
   "chat:write",
+  "chat:write.public",
   "commands",
 ];
 
@@ -1215,3 +1263,581 @@ Expected: Empty diff — core and Telegram adapter unchanged.
 git add -A
 git commit -m "feat(slack): complete Slack channel adapter (SOLID, channel-per-session, Socket Mode)"
 ```
+
+---
+
+## Task 12: Fix code review issues (PR #42)
+
+Issues identified by code review that must be fixed before merge. See spec section "Post-Implementation Issues" for full context.
+
+**Files:**
+- Modify: `src/adapters/slack/formatter.ts`
+- Modify: `src/adapters/slack/text-buffer.ts`
+- Modify: `src/adapters/slack/adapter.ts`
+- Modify: `src/adapters/slack/event-router.ts`
+- Modify: `src/core/core.ts`
+- New: `src/adapters/slack/utils.ts`
+- New: `src/adapters/slack/index.ts`
+- New: `src/adapters/slack/text-buffer.test.ts`
+- Modify: `src/adapters/slack/formatter.test.ts`
+
+---
+
+### Fix 1: Bold/italic regex ordering bug
+
+**File:** `src/adapters/slack/formatter.ts`
+
+- [ ] **Step 1: Write failing test**
+
+In `src/adapters/slack/formatter.test.ts`, add:
+
+```typescript
+import { markdownToMrkdwn } from "./formatter.js";
+
+describe("markdownToMrkdwn", () => {
+  it("converts bold without converting to italic", () => {
+    expect(markdownToMrkdwn("**bold text**")).toBe("*bold text*");
+  });
+
+  it("converts italic correctly", () => {
+    expect(markdownToMrkdwn("*italic text*")).toBe("_italic text_");
+  });
+
+  it("bold and italic in same string stay separate", () => {
+    const result = markdownToMrkdwn("**bold** and *italic*");
+    expect(result).toBe("*bold* and _italic_");
+  });
+
+  it("converts headers to bold", () => {
+    expect(markdownToMrkdwn("## Hello")).toBe("*Hello*");
+  });
+
+  it("converts links", () => {
+    expect(markdownToMrkdwn("[text](https://example.com)")).toBe("<https://example.com|text>");
+  });
+});
+```
+
+- [ ] **Step 2: Run test — verify bold test fails**
+
+```bash
+pnpm test formatter
+```
+
+Expected: `"converts bold without converting to italic"` FAILS — bold gets converted to italic.
+
+- [ ] **Step 3: Fix `markdownToMrkdwn` in `formatter.ts`**
+
+Replace the current `markdownToMrkdwn` function with placeholder-based approach:
+
+```typescript
+export function markdownToMrkdwn(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
+    .replace(/\*\*(.+?)\*\*/g, "\x00BOLD\x00$1\x00BOLD\x00")
+    .replace(/(?<!\x00BOLD\x00)\*(?!\x00BOLD\x00)(.+?)(?<!\x00BOLD\x00)\*(?!\x00BOLD\x00)/g, "_$1_")
+    .replace(/\x00BOLD\x00(.+?)\x00BOLD\x00/g, "*$1*")
+    .replace(/~~(.+?)~~/g, "~$1~")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "<$2|$1>")
+    .replace(/^[ \t]*[-*]\s+/gm, "• ")
+    .trim();
+}
+```
+
+- [ ] **Step 4: Run tests — verify pass**
+
+```bash
+pnpm test formatter
+```
+
+Expected: All `markdownToMrkdwn` tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/adapters/slack/formatter.ts src/adapters/slack/formatter.test.ts
+git commit -m "fix(slack): fix bold/italic ordering bug in markdownToMrkdwn using placeholder tokens"
+```
+
+---
+
+### Fix 2: `botUserId` race condition — throw instead of warn
+
+**File:** `src/adapters/slack/adapter.ts`
+
+- [ ] **Step 1: Replace warn with throw in `start()`**
+
+Find this block in `adapter.ts`:
+
+```typescript
+try {
+  const authResult = await this.webClient.auth.test();
+  this.botUserId = (authResult.user_id as string) ?? "";
+  log.info({ botUserId: this.botUserId }, "Slack bot authenticated");
+} catch (err) {
+  log.warn({ err }, "Failed to resolve Slack bot user ID");
+}
+```
+
+Replace with:
+
+```typescript
+const authResult = await this.webClient.auth.test();
+if (!authResult.user_id) {
+  throw new Error("Slack auth.test() did not return user_id — verify botToken is valid");
+}
+this.botUserId = authResult.user_id as string;
+log.info({ botUserId: this.botUserId }, "Slack bot authenticated");
+```
+
+- [ ] **Step 2: Build**
+
+```bash
+pnpm build
+```
+
+Expected: Compiles without errors.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/adapters/slack/adapter.ts
+git commit -m "fix(slack): throw on auth.test() failure to prevent infinite message loop"
+```
+
+---
+
+### Fix 3: `onNewSession` — reply with guidance instead of no-op
+
+**File:** `src/adapters/slack/adapter.ts`
+
+- [ ] **Step 1: Replace no-op callback with reply**
+
+Find the `onNewSession` callback in `start()`:
+
+```typescript
+// onNewSession: no-op — session is created at startup, not on demand
+(_text, _userId) => {},
+```
+
+Replace with:
+
+```typescript
+async (_text, _userId) => {
+  if (this.slackConfig.notificationChannelId) {
+    await this.queue.enqueue("chat.postMessage", {
+      channel: this.slackConfig.notificationChannelId,
+      text: "💬 To start a new session, use the `/openacp-new` slash command in any channel.",
+    }).catch((err) => log.warn({ err }, "Failed to send onNewSession reply"));
+  }
+},
+```
+
+- [ ] **Step 2: Build**
+
+```bash
+pnpm build
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/adapters/slack/adapter.ts
+git commit -m "fix(slack): reply with guidance when user messages notification channel directly"
+```
+
+---
+
+### Fix 4: `allowedUserIds` not enforced in EventRouter
+
+**File:** `src/adapters/slack/event-router.ts`
+
+- [ ] **Step 1: Add `config` param and `isAllowedUser` check**
+
+Add `config` parameter to `SlackEventRouter` constructor and enforce `allowedUserIds`:
+
+```typescript
+import type { SlackChannelConfig } from "./types.js";
+
+export class SlackEventRouter implements ISlackEventRouter {
+  constructor(
+    private sessionLookup: SessionLookup,
+    private onIncoming: IncomingMessageCallback,
+    private botUserId: string,
+    private notificationChannelId: string | undefined,
+    private onNewSession: NewSessionCallback,
+    private config: SlackChannelConfig,   // ADD THIS
+  ) {}
+
+  register(app: App): void {
+    app.message(async ({ message }) => {
+      // ... existing guards ...
+      const userId: string = (message as any).user ?? "";
+
+      // ADD: allowedUserIds check
+      if (!this.isAllowedUser(userId)) {
+        log.warn({ userId }, "slack: message from non-allowed user rejected");
+        return;
+      }
+
+      // ... rest of existing routing ...
+    });
+  }
+
+  private isAllowedUser(userId: string): boolean {
+    const allowed = this.config.allowedUserIds ?? [];
+    if (allowed.length === 0) return true;
+    return allowed.includes(userId);
+  }
+}
+```
+
+- [ ] **Step 2: Pass `config` when constructing `SlackEventRouter` in `adapter.ts`**
+
+Find the `new SlackEventRouter(...)` call in `adapter.ts` and add `this.slackConfig` as the last argument.
+
+- [ ] **Step 3: Build**
+
+```bash
+pnpm build
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/adapters/slack/event-router.ts src/adapters/slack/adapter.ts
+git commit -m "fix(slack): enforce allowedUserIds in SlackEventRouter"
+```
+
+---
+
+### Fix 5: `renameSessionThread` — use `toSlug()` instead of inline logic
+
+**File:** `src/adapters/slack/adapter.ts`
+
+- [ ] **Step 1: Replace inline slug logic**
+
+Find `renameSessionThread` in `adapter.ts`:
+
+```typescript
+const newSlug = newName
+  .toLowerCase()
+  .replace(/[^a-z0-9\s-]/g, "")
+  .trim()
+  .replace(/\s+/g, "-")
+  .replace(/-+/g, "-")
+  .slice(0, 60);
+```
+
+Replace with:
+
+```typescript
+const newSlug = toSlug(newName, this.slackConfig.channelPrefix ?? "openacp");
+```
+
+> **Note:** `toSlug(name, prefix)` signature — check `slug.ts` to confirm the second argument is `prefix` (not a suffix/nanoid). The function in Task 2 is defined as `toSlug(name: string, prefix = "openacp"): string`. So passing `channelPrefix` here is correct — the nanoid suffix is appended internally by the function itself.
+
+Make sure `toSlug` is imported at the top of `adapter.ts`.
+
+- [ ] **Step 2: Build**
+
+```bash
+pnpm build
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/adapters/slack/adapter.ts
+git commit -m "fix(slack): use toSlug() in renameSessionThread to prevent channel name collisions"
+```
+
+---
+
+### Fix 6: `adoptSession` — store `threadId` as string not Number
+
+**File:** `src/core/core.ts`
+
+- [ ] **Step 1: Fix the `Number()` cast**
+
+In `core.ts`, find `adoptSession`. Locate:
+
+```typescript
+platform: { topicId: Number(session.threadId) },
+```
+
+Replace with:
+
+```typescript
+platform: { topicId: session.threadId },
+```
+
+- [ ] **Step 2: Verify Telegram still works**
+
+Check the `topicId` field type in the Telegram adapter — Telegram uses numeric topic IDs. Verify the type definition of `platform` allows `string | number`:
+
+```bash
+grep -r "topicId" src/
+```
+
+If `topicId` is typed as `number` somewhere, change to `string | number`.
+
+- [ ] **Step 3: Build**
+
+```bash
+pnpm build
+```
+
+Expected: No type errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/core/core.ts
+git commit -m "fix(core): store adoptSession threadId as string to support Slack channel slugs"
+```
+
+---
+
+### Fix 7: `SlackTextBuffer` concurrent flush data loss
+
+**File:** `src/adapters/slack/text-buffer.ts`
+
+- [ ] **Step 1: Write failing test for concurrent flush**
+
+Create `src/adapters/slack/text-buffer.test.ts`:
+
+```typescript
+import { describe, it, expect, vi } from "vitest";
+import { SlackTextBuffer } from "./text-buffer.js";
+
+describe("SlackTextBuffer", () => {
+  it("flushes buffered text as a single message", async () => {
+    const mockQueue = {
+      enqueue: vi.fn().mockResolvedValue({}),
+    } as any;
+    const buf = new SlackTextBuffer("C123", "sess1", mockQueue);
+
+    buf.append("Hello ");
+    buf.append("world");
+    await buf.flush();
+
+    expect(mockQueue.enqueue).toHaveBeenCalledTimes(1);
+    const call = mockQueue.enqueue.mock.calls[0];
+    expect(call[1].text).toContain("Hello");
+    expect(call[1].text).toContain("world");
+  });
+
+  it("does not lose content appended during flush", async () => {
+    let resolveFn!: () => void;
+    const mockQueue = {
+      enqueue: vi.fn().mockImplementation(() => new Promise<void>(r => { resolveFn = r; })),
+    } as any;
+    const buf = new SlackTextBuffer("C123", "sess1", mockQueue);
+
+    buf.append("first");
+    const flushPromise = buf.flush();  // starts flush, blocks on enqueue
+
+    // Append more content while flush is in progress
+    buf.append(" second");
+
+    resolveFn();                        // unblock first flush
+    await flushPromise;
+
+    // Wait for re-flush triggered by content that arrived during flush
+    await new Promise(r => setTimeout(r, 50));
+
+    const allText = mockQueue.enqueue.mock.calls
+      .map((c: any) => c[1].text)
+      .join(" ");
+    expect(allText).toContain("second");
+  });
+
+  it("does not post empty content", async () => {
+    const mockQueue = { enqueue: vi.fn().mockResolvedValue({}) } as any;
+    const buf = new SlackTextBuffer("C123", "sess1", mockQueue);
+    await buf.flush();
+    expect(mockQueue.enqueue).not.toHaveBeenCalled();
+  });
+});
+```
+
+- [ ] **Step 2: Run test — verify concurrent flush test fails**
+
+```bash
+pnpm test text-buffer
+```
+
+Expected: `"does not lose content appended during flush"` FAILS.
+
+- [ ] **Step 3: Fix `flush()` in `text-buffer.ts`**
+
+Replace the current `flush()` implementation:
+
+```typescript
+async flush(): Promise<void> {
+  if (this.flushing) return;
+  const text = this.buffer.trim();
+  if (!text) return;
+  this.buffer = "";
+  if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+
+  this.flushing = true;
+  try {
+    const converted = markdownToMrkdwn(text);
+    const chunks = splitSafe(converted);
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      await this.queue.enqueue("chat.postMessage", {
+        channel: this.channelId,
+        text: chunk,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: chunk } }],
+      });
+    }
+  } finally {
+    this.flushing = false;
+    // Re-flush if content arrived while we were flushing
+    if (this.buffer.trim()) {
+      await this.flush();
+    }
+  }
+}
+```
+
+- [ ] **Step 4: Run tests — verify all pass**
+
+```bash
+pnpm test text-buffer
+```
+
+Expected: All 3 tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/adapters/slack/text-buffer.ts src/adapters/slack/text-buffer.test.ts
+git commit -m "fix(slack): prevent TextBuffer data loss during concurrent flush"
+```
+
+---
+
+### Fix 8: Minor — extract `splitSafe` to shared utils, fix header comment, add barrel export
+
+**Files:** `src/adapters/slack/utils.ts` (new), `src/adapters/slack/formatter.ts`, `src/adapters/slack/text-buffer.ts`, `src/adapters/slack/adapter.ts` (header), `src/adapters/slack/index.ts` (new)
+
+- [ ] **Step 1: Create `src/adapters/slack/utils.ts`**
+
+```typescript
+// src/adapters/slack/utils.ts
+
+const SECTION_LIMIT = 3000;
+
+/**
+ * Split text at `limit` boundary, never inside a fenced code block.
+ * Used by SlackFormatter and SlackTextBuffer.
+ */
+export function splitSafe(text: string, limit = SECTION_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= limit) { chunks.push(remaining); break; }
+    let cut = remaining.lastIndexOf("\n", limit);
+    if (cut <= 0) cut = limit;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).trimStart();
+  }
+  return chunks;
+}
+```
+
+- [ ] **Step 2: Update `formatter.ts` and `text-buffer.ts` to import from `utils.ts`**
+
+In `formatter.ts`, remove the local `splitSafe` function and add:
+```typescript
+import { splitSafe } from "./utils.js";
+```
+
+In `text-buffer.ts`, remove the local `splitSafe` function and add:
+```typescript
+import { splitSafe } from "./utils.js";
+```
+
+- [ ] **Step 3: Fix file header comment in `adapter.ts`**
+
+Change line 1:
+```typescript
+// src/adapters/slack/index.ts
+```
+to:
+```typescript
+// src/adapters/slack/adapter.ts
+```
+
+- [ ] **Step 3b: Fix `config as never` type cast in `SlackAdapter` constructor**
+
+In `adapter.ts`, find:
+```typescript
+constructor(core: OpenACPCore, config: SlackChannelConfig) {
+  super(core, config as never);
+```
+
+`ChannelAdapter` is generic — fix by passing the correct type argument:
+```typescript
+export class SlackAdapter extends ChannelAdapter<OpenACPCore, SlackChannelConfig> {
+  constructor(core: OpenACPCore, config: SlackChannelConfig) {
+    super(core, config);
+```
+
+Check `src/core/channel.ts` for the exact generic signature of `ChannelAdapter` to confirm the type parameters before making this change.
+
+- [ ] **Step 4: Create `src/adapters/slack/index.ts` barrel export**
+
+```typescript
+// src/adapters/slack/index.ts
+export { SlackAdapter } from "./adapter.js";
+export type { SlackChannelConfig } from "./types.js";
+```
+
+- [ ] **Step 5: Build and run all tests**
+
+```bash
+pnpm build && pnpm test
+```
+
+Expected: Zero errors, all tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/adapters/slack/utils.ts src/adapters/slack/index.ts src/adapters/slack/formatter.ts src/adapters/slack/text-buffer.ts src/adapters/slack/adapter.ts
+git commit -m "refactor(slack): extract splitSafe to utils, add barrel export, fix header comment"
+```
+
+---
+
+### Final verification for Task 12
+
+- [ ] **Step 1: Full test suite**
+
+```bash
+pnpm test
+```
+
+Expected: All tests pass including new ones for `markdownToMrkdwn` and `SlackTextBuffer`.
+
+- [ ] **Step 2: Build**
+
+```bash
+pnpm build
+```
+
+Expected: Zero errors.
+
+- [ ] **Step 3: Verify core diff is minimal**
+
+```bash
+git diff origin/main -- src/core/core.ts
+```
+
+Expected: Only the `Number(session.threadId)` → `session.threadId` change.
