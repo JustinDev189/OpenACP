@@ -7,7 +7,6 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from "discord.js";
-import { ChannelAdapter } from "../../core/channel.js";
 import type {
   OutgoingMessage,
   PermissionRequest,
@@ -19,11 +18,10 @@ import type { OpenACPCore } from "../../core/core.js";
 import type { Session } from "../../core/session.js";
 import { log } from "../../core/log.js";
 import type { DisplayVerbosity } from "../shared/format-types.js";
-import { evaluateNoise } from "../shared/message-formatter.js";
-import {
-  dispatchMessage,
-  type MessageHandlers,
-} from "../shared/message-dispatcher.js";
+import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";
+import type { IRenderer } from "../shared/rendering/renderer.js";
+import { BaseRenderer } from "../shared/rendering/renderer.js";
+import type { AdapterCapabilities } from "../../core/channel.js";
 import type { DiscordChannelConfig } from "./types.js";
 import { DiscordSendQueue } from "./send-queue.js";
 import { ToolCallTracker } from "./tool-call-tracker.js";
@@ -53,14 +51,15 @@ import {
   isAttachmentTooLarge,
 } from "./media.js";
 
-interface DiscordMessageCtx {
-  sessionId: string;
-  thread: ThreadChannel;
-  isAssistant: boolean;
-}
-
-export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
+export class DiscordAdapter extends MessagingAdapter {
   readonly name = 'discord';
+  readonly renderer: IRenderer = new BaseRenderer();
+  readonly capabilities: AdapterCapabilities = {
+    streaming: true, richFormatting: true, threads: true,
+    reactions: true, fileUpload: true, voice: false,
+  };
+
+  readonly core: OpenACPCore;
   private client: Client;
   private discordConfig: DiscordChannelConfig;
   private sendQueue: DiscordSendQueue;
@@ -70,13 +69,6 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
   private permissionHandler!: PermissionHandler;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
 
-  private get verbosity(): DisplayVerbosity {
-    return (
-      ((this.discordConfig as Record<string, unknown>)
-        .displayVerbosity as DisplayVerbosity) ?? "medium"
-    );
-  }
-
   private guild!: Guild;
   private forumChannel!: ForumChannel | TextChannel;
   private notificationChannel!: TextChannel;
@@ -84,8 +76,16 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
   private assistantInitializing = false;
   private fileService: FileService;
 
+  // Thread reference stored by sendMessage for handler methods to use
+  private _currentThread!: ThreadChannel;
+  private _currentIsAssistant = false;
+
   constructor(core: OpenACPCore, config: DiscordChannelConfig) {
-    super(core, config);
+    super(
+      { configManager: core.configManager },
+      { ...config as Record<string, unknown>, maxMessageLength: 2000, enabled: config.enabled ?? true } as MessagingAdapterConfig,
+    );
+    this.core = core;
     this.discordConfig = config;
 
     this.client = new Client({
@@ -513,232 +513,6 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
     return this.sessionTrackers.get(sessionId)!;
   }
 
-  // --- MessageHandlers for dispatchMessage ---
-
-  private messageHandlers: MessageHandlers<DiscordMessageCtx> = {
-    onThought: async (ctx, _content) => {
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.onThought();
-    },
-
-    onText: async (ctx, content) => {
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.onTextStart();
-      const draft = this.draftManager.getOrCreate(ctx.sessionId, ctx.thread);
-      draft.append(content.text);
-      this.draftManager.appendText(ctx.sessionId, content.text);
-    },
-
-    onToolCall: async (ctx, content) => {
-      const meta = content.metadata ?? {};
-      const toolName = String(meta.name ?? content.text ?? "Tool");
-      const toolKind = String(meta.kind ?? "other");
-      const noiseAction = evaluateNoise(toolName, toolKind, meta.rawInput);
-      if (noiseAction === "hide" && this.verbosity !== "high") return;
-      if (noiseAction === "collapse" && this.verbosity === "low") return;
-
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.onToolCall();
-      await this.draftManager.finalize(
-        ctx.sessionId,
-        ctx.thread,
-        ctx.isAssistant,
-      );
-      await this.toolTracker.trackNewCall(
-        ctx.sessionId,
-        ctx.thread,
-        {
-          id: String(meta.id ?? ""),
-          name: toolName,
-          kind: meta.kind as string | undefined,
-          status: String(meta.status ?? "running"),
-          content: meta.content,
-          rawInput: meta.rawInput,
-          viewerLinks: meta.viewerLinks as
-            | { file?: string; diff?: string }
-            | undefined,
-          viewerFilePath: meta.viewerFilePath as string | undefined,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
-        },
-        this.verbosity,
-      );
-    },
-
-    onToolUpdate: async (ctx, content) => {
-      const meta = content.metadata ?? {};
-      await this.toolTracker.updateCall(
-        ctx.sessionId,
-        {
-          id: String(meta.id ?? ""),
-          name: content.text || String(meta.name ?? ""),
-          kind: meta.kind as string | undefined,
-          status: String(meta.status ?? "completed"),
-          content: meta.content,
-          rawInput: meta.rawInput,
-          viewerLinks: meta.viewerLinks as
-            | { file?: string; diff?: string }
-            | undefined,
-          viewerFilePath: meta.viewerFilePath as string | undefined,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
-        },
-        this.verbosity,
-      );
-    },
-
-    onPlan: async (ctx, content) => {
-      const entries = (content.metadata?.entries ?? []) as PlanEntry[];
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.onPlan(entries, this.verbosity);
-    },
-
-    onUsage: async (ctx, content) => {
-      await this.draftManager.finalize(
-        ctx.sessionId,
-        ctx.thread,
-        ctx.isAssistant,
-      );
-      const meta = content.metadata ?? {};
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.sendUsage(
-        {
-          tokensUsed: meta.tokensUsed as number | undefined,
-          contextSize: meta.contextSize as number | undefined,
-          cost: meta.cost as number | undefined,
-        },
-        this.verbosity,
-      );
-      // Send usage notification to notification channel
-      try {
-        const deepLink = buildDeepLink(this.guild.id, ctx.thread.id);
-        await this.sendNotification({
-          sessionId: ctx.sessionId,
-          type: "completed",
-          summary: content.text || "Session completed",
-          deepLink,
-        });
-      } catch {
-        /* best effort */
-      }
-    },
-
-    onSessionEnd: async (ctx, _content) => {
-      await this.draftManager.finalize(
-        ctx.sessionId,
-        ctx.thread,
-        ctx.isAssistant,
-      );
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.cleanup();
-      this.toolTracker.cleanup(ctx.sessionId);
-      this.sessionTrackers.delete(ctx.sessionId);
-      await this.skillManager.cleanup(ctx.sessionId);
-      try {
-        await this.sendQueue.enqueue(
-          () => ctx.thread.send({ content: "✅ Done" }),
-          { type: "other" },
-        );
-      } catch {
-        /* best effort */
-      }
-    },
-
-    onError: async (ctx, content) => {
-      await this.draftManager.finalize(
-        ctx.sessionId,
-        ctx.thread,
-        ctx.isAssistant,
-      );
-      const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
-      await tracker.cleanup();
-      this.toolTracker.cleanup(ctx.sessionId);
-      this.sessionTrackers.delete(ctx.sessionId);
-      try {
-        await this.sendQueue.enqueue(
-          () => ctx.thread.send({ content: `❌ Error: ${content.text}` }),
-          { type: "other" },
-        );
-      } catch {
-        /* best effort */
-      }
-    },
-
-    onAttachment: async (ctx, content) => {
-      if (!content.attachment) return;
-      const { attachment } = content;
-      await this.draftManager.finalize(
-        ctx.sessionId,
-        ctx.thread,
-        ctx.isAssistant,
-      );
-
-      // Discord free tier limit: 25MB
-      if (isAttachmentTooLarge(attachment.size)) {
-        log.warn(
-          {
-            sessionId: ctx.sessionId,
-            fileName: attachment.fileName,
-            size: attachment.size,
-          },
-          "[discord-media] File too large (>25MB)",
-        );
-        try {
-          await this.sendQueue.enqueue(
-            () =>
-              ctx.thread.send({
-                content: `⚠️ File too large to send (${Math.round(attachment.size / 1024 / 1024)}MB): ${attachment.fileName}`,
-              }),
-            { type: "other" },
-          );
-        } catch {
-          /* best effort */
-        }
-        return;
-      }
-
-      try {
-        await this.sendQueue.enqueue(
-          () =>
-            ctx.thread.send({
-              files: [
-                { attachment: attachment.filePath, name: attachment.fileName },
-              ],
-            }),
-          { type: "other" },
-        );
-
-        // Strip [TTS]...[/TTS] block from the text message after audio is sent.
-        // This fires after sendQueue completes, so the draft message already exists.
-        // stripPattern is best-effort and handles missing/finalized drafts gracefully.
-        if (attachment.type === "audio") {
-          const draft = this.draftManager.getDraft(ctx.sessionId);
-          if (draft) {
-            draft.stripPattern(/\[TTS\][\s\S]*?\[\/TTS\]/g).catch(() => {});
-          }
-        }
-      } catch (err) {
-        log.error(
-          { err, sessionId: ctx.sessionId, fileName: attachment.fileName },
-          "[discord-media] Failed to send attachment",
-        );
-      }
-    },
-
-    onSystemMessage: async (ctx, content) => {
-      try {
-        await this.sendQueue.enqueue(
-          () => ctx.thread.send({ content: content.text }),
-          { type: "other" },
-        );
-      } catch {
-        /* best effort */
-      }
-    },
-  };
-
   // ─── sendMessage ──────────────────────────────────────────────────────────
 
   async sendMessage(
@@ -759,11 +533,246 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
     await ensureUnarchived(thread);
 
-    const isAssistant =
+    // Store thread reference for handler methods to use
+    this._currentThread = thread;
+    this._currentIsAssistant =
       this.assistantSession != null && sessionId === this.assistantSession.id;
 
-    const ctx: DiscordMessageCtx = { sessionId, thread, isAssistant };
-    await dispatchMessage(this.messageHandlers, ctx, content, this.verbosity);
+    await super.sendMessage(sessionId, content);
+  }
+
+  // ─── Handler overrides ─────────────────────────────────────────────────────
+
+  protected async handleThought(sessionId: string, _content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    const thread = this._currentThread;
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.onThought();
+  }
+
+  protected async handleText(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const thread = this._currentThread;
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.onTextStart();
+    const draft = this.draftManager.getOrCreate(sessionId, thread);
+    draft.append(content.text);
+    this.draftManager.appendText(sessionId, content.text);
+  }
+
+  protected async handleToolCall(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+    const thread = this._currentThread;
+    const isAssistant = this._currentIsAssistant;
+    const meta = content.metadata ?? {};
+    const toolName = String(meta.name ?? content.text ?? "Tool");
+
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.onToolCall();
+    await this.draftManager.finalize(
+      sessionId,
+      thread,
+      isAssistant,
+    );
+    await this.toolTracker.trackNewCall(
+      sessionId,
+      thread,
+      {
+        id: String(meta.id ?? ""),
+        name: toolName,
+        kind: meta.kind as string | undefined,
+        status: String(meta.status ?? "running"),
+        content: meta.content,
+        rawInput: meta.rawInput,
+        viewerLinks: meta.viewerLinks as
+          | { file?: string; diff?: string }
+          | undefined,
+        viewerFilePath: meta.viewerFilePath as string | undefined,
+        displaySummary: meta.displaySummary as string | undefined,
+        displayTitle: meta.displayTitle as string | undefined,
+        displayKind: meta.displayKind as string | undefined,
+      },
+      verbosity,
+    );
+  }
+
+  protected async handleToolUpdate(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+    const meta = content.metadata ?? {};
+    await this.toolTracker.updateCall(
+      sessionId,
+      {
+        id: String(meta.id ?? ""),
+        name: content.text || String(meta.name ?? ""),
+        kind: meta.kind as string | undefined,
+        status: String(meta.status ?? "completed"),
+        content: meta.content,
+        rawInput: meta.rawInput,
+        viewerLinks: meta.viewerLinks as
+          | { file?: string; diff?: string }
+          | undefined,
+        viewerFilePath: meta.viewerFilePath as string | undefined,
+        displaySummary: meta.displaySummary as string | undefined,
+        displayTitle: meta.displayTitle as string | undefined,
+        displayKind: meta.displayKind as string | undefined,
+      },
+      verbosity,
+    );
+  }
+
+  protected async handlePlan(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+    const thread = this._currentThread;
+    const entries = (content.metadata?.entries ?? []) as PlanEntry[];
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.onPlan(entries, verbosity);
+  }
+
+  protected async handleUsage(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+    const thread = this._currentThread;
+    const isAssistant = this._currentIsAssistant;
+    await this.draftManager.finalize(
+      sessionId,
+      thread,
+      isAssistant,
+    );
+    const meta = content.metadata ?? {};
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.sendUsage(
+      {
+        tokensUsed: meta.tokensUsed as number | undefined,
+        contextSize: meta.contextSize as number | undefined,
+        cost: meta.cost as number | undefined,
+      },
+      verbosity,
+    );
+    // Send usage notification to notification channel
+    try {
+      const deepLink = buildDeepLink(this.guild.id, thread.id);
+      await this.sendNotification({
+        sessionId,
+        type: "completed",
+        summary: content.text || "Session completed",
+        deepLink,
+      });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  protected async handleSessionEnd(sessionId: string, _content: OutgoingMessage): Promise<void> {
+    const thread = this._currentThread;
+    const isAssistant = this._currentIsAssistant;
+    await this.draftManager.finalize(
+      sessionId,
+      thread,
+      isAssistant,
+    );
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.cleanup();
+    this.toolTracker.cleanup(sessionId);
+    this.sessionTrackers.delete(sessionId);
+    await this.skillManager.cleanup(sessionId);
+    try {
+      await this.sendQueue.enqueue(
+        () => thread.send({ content: "✅ Done" }),
+        { type: "other" },
+      );
+    } catch {
+      /* best effort */
+    }
+  }
+
+  protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const thread = this._currentThread;
+    const isAssistant = this._currentIsAssistant;
+    await this.draftManager.finalize(
+      sessionId,
+      thread,
+      isAssistant,
+    );
+    const tracker = this.getOrCreateTracker(sessionId, thread);
+    await tracker.cleanup();
+    this.toolTracker.cleanup(sessionId);
+    this.sessionTrackers.delete(sessionId);
+    try {
+      await this.sendQueue.enqueue(
+        () => thread.send({ content: `❌ Error: ${content.text}` }),
+        { type: "other" },
+      );
+    } catch {
+      /* best effort */
+    }
+  }
+
+  protected async handleAttachment(sessionId: string, content: OutgoingMessage): Promise<void> {
+    if (!content.attachment) return;
+    const { attachment } = content;
+    const thread = this._currentThread;
+    const isAssistant = this._currentIsAssistant;
+    await this.draftManager.finalize(
+      sessionId,
+      thread,
+      isAssistant,
+    );
+
+    // Discord free tier limit: 25MB
+    if (isAttachmentTooLarge(attachment.size)) {
+      log.warn(
+        {
+          sessionId,
+          fileName: attachment.fileName,
+          size: attachment.size,
+        },
+        "[discord-media] File too large (>25MB)",
+      );
+      try {
+        await this.sendQueue.enqueue(
+          () =>
+            thread.send({
+              content: `⚠️ File too large to send (${Math.round(attachment.size / 1024 / 1024)}MB): ${attachment.fileName}`,
+            }),
+          { type: "other" },
+        );
+      } catch {
+        /* best effort */
+      }
+      return;
+    }
+
+    try {
+      await this.sendQueue.enqueue(
+        () =>
+          thread.send({
+            files: [
+              { attachment: attachment.filePath, name: attachment.fileName },
+            ],
+          }),
+        { type: "other" },
+      );
+
+      // Strip [TTS]...[/TTS] block from the text message after audio is sent.
+      // This fires after sendQueue completes, so the draft message already exists.
+      // stripPattern is best-effort and handles missing/finalized drafts gracefully.
+      if (attachment.type === "audio") {
+        const draft = this.draftManager.getDraft(sessionId);
+        if (draft) {
+          draft.stripPattern(/\[TTS\][\s\S]*?\[\/TTS\]/g).catch(() => {});
+        }
+      }
+    } catch (err) {
+      log.error(
+        { err, sessionId, fileName: attachment.fileName },
+        "[discord-media] Failed to send attachment",
+      );
+    }
+  }
+
+  protected async handleSystem(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const thread = this._currentThread;
+    try {
+      await this.sendQueue.enqueue(
+        () => thread.send({ content: content.text }),
+        { type: "other" },
+      );
+    } catch {
+      /* best effort */
+    }
   }
 
   // ─── sendPermissionRequest ────────────────────────────────────────────────
@@ -854,7 +863,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
   // ─── deleteSessionThread ──────────────────────────────────────────────────
 
-  override async deleteSessionThread(sessionId: string): Promise<void> {
+  async deleteSessionThread(sessionId: string): Promise<void> {
     const session = this.core.sessionManager.getSession(sessionId);
     const threadId = session?.threadId;
     if (!threadId) return;
@@ -863,7 +872,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
   // ─── sendSkillCommands ────────────────────────────────────────────────────
 
-  override async sendSkillCommands(
+  async sendSkillCommands(
     sessionId: string,
     commands: AgentCommand[],
   ): Promise<void> {
@@ -874,7 +883,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
   // ─── cleanupSkillCommands ─────────────────────────────────────────────────
 
-  override async cleanupSkillCommands(sessionId: string): Promise<void> {
+  async cleanupSkillCommands(sessionId: string): Promise<void> {
     await this.skillManager.cleanup(sessionId);
   }
 
