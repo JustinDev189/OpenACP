@@ -443,15 +443,17 @@ export async function handleArchiveConfirm(
     try {
       await ctx.api.deleteForumTopic(chatId, topicId);
       core.notificationManager.notifyAll({
-        sessionId: `topic-${topicId}`,
+        sessionId: "system",
+        sessionName: `Orphan topic #${topicId}`,
         type: "completed",
-        summary: "Orphan topic archived and deleted.",
+        summary: `Orphan topic #${topicId} archived and deleted.`,
       });
     } catch (err) {
       core.notificationManager.notifyAll({
-        sessionId: `topic-${topicId}`,
+        sessionId: "system",
+        sessionName: `Orphan topic #${topicId}`,
         type: "error",
-        summary: `Failed to delete topic: ${(err as Error).message}`,
+        summary: `Failed to delete orphan topic #${topicId}: ${(err as Error).message}`,
       });
     }
     return;

@@ -915,37 +915,32 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     await this.skillManager.cleanup(sessionId);
   }
 
-  async archiveSessionTopic(sessionId: string): Promise<{ newThreadId: string } | null> {
+  async archiveSessionTopic(sessionId: string): Promise<void> {
     const core = this.core as OpenACPCore;
     const session = core.sessionManager.getSession(sessionId);
-    if (!session) return null;
+    if (!session) return;
 
     const chatId = this.telegramConfig.chatId;
     const oldTopicId = Number(session.threadId);
 
-    // 1. Set archiving flag — sendMessage will skip while this is true
+    // Set archiving flag — sendMessage will skip while this is true.
+    // Flag stays true until core finishes cancelSession (prevents race window).
     session.archiving = true;
 
-    try {
-      // 2. Finalize any pending draft
-      await this.draftManager.finalize(session.id, this.assistantSession?.id);
+    // Finalize any pending draft
+    await this.draftManager.finalize(session.id, this.assistantSession?.id);
 
-      // 3. Cleanup all trackers
-      this.draftManager.cleanup(session.id);
-      this.toolTracker.cleanup(session.id);
-      await this.skillManager.cleanup(session.id);
-      const tracker = this.sessionTrackers.get(session.id);
-      if (tracker) {
-        tracker.destroy();
-        this.sessionTrackers.delete(session.id);
-      }
-
-      // 4. Delete topic (removes all messages)
-      await deleteSessionTopic(this.bot, chatId, oldTopicId);
-    } finally {
-      session.archiving = false;
+    // Cleanup all trackers
+    this.draftManager.cleanup(session.id);
+    this.toolTracker.cleanup(session.id);
+    await this.skillManager.cleanup(session.id);
+    const tracker = this.sessionTrackers.get(session.id);
+    if (tracker) {
+      tracker.destroy();
+      this.sessionTrackers.delete(session.id);
     }
 
-    return { newThreadId: "" };
+    // Delete topic (removes all messages)
+    await deleteSessionTopic(this.bot, chatId, oldTopicId);
   }
 }

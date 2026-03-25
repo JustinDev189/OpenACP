@@ -220,6 +220,10 @@ export class OpenACPCore {
           await this.sessionManager.cancelSession(sessionId);
         } catch {
           // Session may already be finished/cancelled
+        } finally {
+          // Clear archiving flag after cancel completes — prevents race window
+          // where agent events try to send to deleted topic
+          session.archiving = false;
         }
       }
 
@@ -228,6 +232,8 @@ export class OpenACPCore {
 
       return { ok: true };
     } catch (err) {
+      // Clear archiving flag on error too
+      if (session) session.archiving = false;
       return { ok: false, error: (err as Error).message };
     }
   }
