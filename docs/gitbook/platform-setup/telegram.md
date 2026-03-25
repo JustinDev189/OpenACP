@@ -90,7 +90,7 @@ Replace `<YOUR_TOKEN>` with your bot token. Send a message in the group first, t
 
 ## Step 5: Configure OpenACP
 
-Edit `~/.openacp/config.json` and fill in the Telegram section:
+Edit `~/.openacp/config.json` and fill in the Telegram section (see the [full configuration reference](../self-hosting/configuration.md) for all available options):
 
 ```json
 {
@@ -225,3 +225,5 @@ Environment variables take precedence over values in `config.json`.
 **Chat ID is not detected**
 - Make sure you sent a message in the group after adding the bot.
 - Press `m` in the setup wizard to enter the Chat ID manually.
+
+For more detailed troubleshooting, see [Telegram Issues](../troubleshooting/telegram-issues.md).

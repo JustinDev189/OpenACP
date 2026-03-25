@@ -2,6 +2,8 @@
 
 Run `openacp doctor` first — it validates your bot token, chat ID, group type, and admin status automatically.
 
+If you haven't finished initial setup, see the [Telegram Setup guide](../platform-setup/telegram.md) first.
+
 ---
 
 ### Bot doesn't respond to messages

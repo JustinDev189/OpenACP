@@ -129,7 +129,7 @@ openacp onboard
 
 ## Next steps
 
-- [Platform Setup](../platform-setup/) — detailed setup guides for Telegram, Discord, and Slack
+- Platform Setup — detailed setup guides for [Telegram](../platform-setup/telegram.md), [Discord](../platform-setup/discord.md), and [Slack](../platform-setup/slack.md)
 - [Configuration Reference](../self-hosting/configuration.md) — all config options explained
-- [Agents](../features/agents.md) — how to configure and switch between agents
-- [Daemon Mode](../self-hosting/daemon.md) — running OpenACP as a persistent background service
+- [Agents](../using-openacp/agents.md) — how to configure and switch between agents
+- [Daemon Mode](../self-hosting/daemon-mode.md) — running OpenACP as a persistent background service

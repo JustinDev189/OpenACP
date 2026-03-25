@@ -1,5 +1,7 @@
 # Slack Issues
 
+If you haven't finished initial setup, see the [Slack Setup guide](../platform-setup/slack.md) first.
+
 ---
 
 ### Socket Mode connection fails on startup

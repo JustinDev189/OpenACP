@@ -2,6 +2,8 @@
 
 Run `openacp doctor` first — it validates your bot token and guild access automatically.
 
+If you haven't finished initial setup, see the [Discord Setup guide](../platform-setup/discord.md) first.
+
 ---
 
 ### Slash commands don't appear in Discord

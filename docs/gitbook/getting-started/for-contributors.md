@@ -105,6 +105,6 @@ pnpm test --watch
 
 ## Where to go next
 
-- [Writing a Channel Adapter](../extending/writing-a-channel-adapter.md) — step-by-step guide to adding a new platform
-- [Writing a Plugin](../extending/writing-a-plugin.md) — how the plugin system works
-- [Architecture Deep Dive](../extending/architecture.md) — detailed walkthrough of the data flow
+- [Contributing](../extending/contributing.md) — PR process, code conventions, and testing guidelines
+- [Building Adapters](../extending/building-adapters.md) — step-by-step guide to adding a new platform
+- [Plugin System](../extending/plugin-system.md) — how the plugin system works

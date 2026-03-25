@@ -45,6 +45,8 @@ Use this only when you have reviewed the agent's plan and are confident in what 
 
 Permission approvals are logged. Use `/status` to see the current session state, or check the session topic history to review what was approved during a session.
 
+For server-wide access controls (user allowlists, session limits), see [Security](../self-hosting/security.md).
+
 ## Disabling dangerous mode
 
 Run `/disable_dangerous` (Telegram) or `/dangerous` (Discord) inside the session topic, or tap the "Disable Dangerous Mode" button in the session control keyboard.

@@ -68,7 +68,7 @@ Do not expose the API port externally. The default `host: "127.0.0.1"` binding e
 
 ## Dangerous Mode
 
-Some agent operations (file writes, command execution) require explicit user approval via permission request buttons in the chat. This is the default behavior.
+Some agent operations (file writes, command execution) require explicit user approval via permission request buttons in the chat. This is the default behavior. For details on how permissions work from a user's perspective, see [Permissions](../using-openacp/permissions.md).
 
 If an agent is configured to run without permission prompts (agent-side configuration), ensure your allowlist is restricted to trusted users only, since any allowlisted user will have the ability to trigger unrestricted agent actions.
 

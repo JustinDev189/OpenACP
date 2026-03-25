@@ -114,7 +114,7 @@ This step is optional — OpenACP will create and manage the channel automatical
 
 ## Step 7: Configure OpenACP
 
-Edit `~/.openacp/config.json` and fill in the Discord section:
+Edit `~/.openacp/config.json` and fill in the Discord section (see the [full configuration reference](../self-hosting/configuration.md) for all available options):
 
 ```json
 {
@@ -251,3 +251,5 @@ openacp start
 **Files not sending or receiving**
 - The bot needs **Attach Files** permission.
 - Discord's free tier has a 25 MB file size limit per message. Files larger than this are rejected with a warning.
+
+For more detailed troubleshooting, see [Discord Issues](../troubleshooting/discord-issues.md).

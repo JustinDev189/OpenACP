@@ -122,7 +122,7 @@ Permission buttons (Allow / Deny) require interactivity to be enabled.
 
 ## Step 8: Configure OpenACP
 
-Edit `~/.openacp/config.json` and add the Slack section:
+Edit `~/.openacp/config.json` and add the Slack section (see the [full configuration reference](../self-hosting/configuration.md) for all available options):
 
 ```json
 {
@@ -320,3 +320,5 @@ This is almost always a missing scope or event subscription.
 
 **"Invalid signing secret"**
 - Go to **Basic Information → App Credentials** and re-copy the Signing Secret. Ensure there are no leading or trailing spaces.
+
+For more detailed troubleshooting, see [Slack Issues](../troubleshooting/slack-issues.md).

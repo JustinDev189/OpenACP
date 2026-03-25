@@ -36,6 +36,8 @@ This runs `runReconfigure()`, which loads your existing config, shows a summary,
 - **Run Mode** — Switch between foreground and daemon mode, and toggle autostart on boot.
 - **Integrations** — Configure optional integrations (e.g., Claude CLI).
 
+For the machine-readable schema with all field types and defaults, see the [Configuration Schema](../api-reference/configuration-schema.md). For a full list of environment variable overrides, see [Environment Variables](../api-reference/environment-variables.md).
+
 ## Full Configuration Reference
 
 ### `channels`

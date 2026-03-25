@@ -19,7 +19,7 @@ The agent then receives the transcription as a normal text prompt. If the agent 
 
 ### Configuring STT
 
-Add your Groq API key to the config:
+Add your Groq API key to the config (see [Configuration](../self-hosting/configuration.md) for the full `speech` config reference):
 
 ```json
 {

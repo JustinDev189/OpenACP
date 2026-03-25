@@ -40,7 +40,7 @@ Login: claude login (opens browser)
 
 ## Uninstalling an agent
 
-Agents can be uninstalled from the CLI:
+Agents can be uninstalled from the CLI (see [CLI Commands](../api-reference/cli-commands.md) for the full command reference):
 
 ```
 openacp agents uninstall <name>
