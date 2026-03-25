@@ -136,15 +136,32 @@ describe("formatToolCall", () => {
     expect(result).toContain("file content here");
   });
 
-  it("no inline content on medium verbosity", () => {
+  it("no inline content on low verbosity", () => {
+    const result = formatToolCall(
+      {
+        id: "1",
+        name: "write_file",
+        kind: "write",
+        status: "completed",
+        content: "file content here",
+      },
+      "low",
+    );
+    expect(result).not.toContain("```");
+  });
+
+  it("medium hides content when viewer links present", () => {
     const result = formatToolCall({
       id: "1",
-      name: "write_file",
+      name: "edit_file",
       kind: "write",
       status: "completed",
-      content: "file content here",
+      content: "should not appear",
+      viewerLinks: { file: "https://example.com/file" },
+      viewerFilePath: "test.ts",
     });
     expect(result).not.toContain("```");
+    expect(result).toContain("[View test.ts]");
   });
 
   it("truncates content at 500 chars (high verbosity)", () => {

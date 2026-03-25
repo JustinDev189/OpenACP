@@ -27,6 +27,10 @@ export function extractContentText(content: unknown, depth = 0): string {
   if (obj.input) return extractContentText(obj.input, depth + 1);
   if (obj.output) return extractContentText(obj.output, depth + 1);
 
+  // Skip objects with only a 'type' key and no content fields
+  const keys = Object.keys(obj).filter((k) => k !== "type");
+  if (keys.length === 0) return "";
+
   // Fallback: serialize unrecognized objects so edge-case agent responses are not silently dropped
   try {
     return JSON.stringify(obj, null, 2);

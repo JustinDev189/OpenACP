@@ -91,7 +91,8 @@ export function formatToolCall(
       : formatToolSummary(name, tool.rawInput);
   let text = `${si} <b>${escapeHtml(label)}</b>`;
   text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
-  if (verbosity === "high") {
+  // high: always show content; medium: show when no viewer links; low: never
+  if (verbosity === "high" || (verbosity === "medium" && !tool.viewerLinks)) {
     const details = stripCodeFences(extractContentText(tool.content));
     if (details) {
       text += `\n<pre>${escapeHtml(truncateContent(details, 3800))}</pre>`;
@@ -112,7 +113,7 @@ export function formatToolUpdate(
       : formatToolSummary(name, update.rawInput);
   let text = `${si} <b>${escapeHtml(label)}</b>`;
   text += formatViewerLinks(update.viewerLinks, update.viewerFilePath);
-  if (verbosity === "high") {
+  if (verbosity === "high" || (verbosity === "medium" && !update.viewerLinks)) {
     const details = stripCodeFences(extractContentText(update.content));
     if (details) {
       text += `\n<pre>${escapeHtml(truncateContent(details, 3800))}</pre>`;

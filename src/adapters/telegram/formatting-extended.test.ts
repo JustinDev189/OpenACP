@@ -156,14 +156,30 @@ describe("formatToolCall", () => {
     expect(result).toContain("file content here");
   });
 
-  it("no inline content on medium verbosity", () => {
+  it("no inline content on low verbosity", () => {
+    const result = formatToolCall(
+      {
+        id: "tc-1",
+        name: "Read",
+        status: "completed",
+        content: "file content here",
+      },
+      "low",
+    );
+    expect(result).not.toContain("<pre>");
+  });
+
+  it("medium hides content when viewer links present", () => {
     const result = formatToolCall({
       id: "tc-1",
-      name: "Read",
+      name: "Edit",
       status: "completed",
-      content: "file content here",
+      content: "should not appear",
+      viewerLinks: { file: "https://view/1" },
+      viewerFilePath: "test.ts",
     });
     expect(result).not.toContain("<pre>");
+    expect(result).toContain("View test.ts");
   });
 
   it("shows viewer links instead of content when available", () => {

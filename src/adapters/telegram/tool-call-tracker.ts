@@ -54,17 +54,20 @@ export class ToolCallTracker {
       ready,
     });
 
-    const msg = await this.sendQueue.enqueue(() =>
-      this.bot.api.sendMessage(this.chatId, formatToolCall(meta, verbosity), {
-        message_thread_id: threadId,
-        parse_mode: "HTML",
-        disable_notification: true,
-      }),
-    );
+    try {
+      const msg = await this.sendQueue.enqueue(() =>
+        this.bot.api.sendMessage(this.chatId, formatToolCall(meta, verbosity), {
+          message_thread_id: threadId,
+          parse_mode: "HTML",
+          disable_notification: true,
+        }),
+      );
 
-    const toolEntry = this.sessions.get(sessionId)!.get(meta.id)!;
-    toolEntry.msgId = msg!.message_id;
-    resolveReady();
+      const toolEntry = this.sessions.get(sessionId)!.get(meta.id)!;
+      toolEntry.msgId = msg!.message_id;
+    } finally {
+      resolveReady();
+    }
   }
 
   async updateCall(
