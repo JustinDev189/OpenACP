@@ -24,7 +24,7 @@ import {
   cmdAgents,
   cmdTunnel,
   cmdOnboard,
-} from './cli/commands.js'
+} from './cli/commands/index.js'
 
 const args = process.argv.slice(2);
 const command = args[0];

@@ -1,0 +1,45 @@
+import { wantsHelp } from './helpers.js'
+
+export async function cmdReset(args: string[] = []): Promise<void> {
+  if (wantsHelp(args)) {
+    console.log(`
+\x1b[1mopenacp reset\x1b[0m — Re-run setup wizard
+
+\x1b[1mUsage:\x1b[0m
+  openacp reset
+
+Deletes all OpenACP data (~/.openacp) and allows you to
+start fresh with the setup wizard. The daemon must be stopped first.
+
+\x1b[1m\x1b[31mThis is destructive\x1b[0m — config, plugins, agent data will be removed.
+`)
+    return
+  }
+  const { getStatus } = await import('../daemon.js')
+  const status = getStatus()
+  if (status.running) {
+    console.error('OpenACP is running. Stop it first: openacp stop')
+    process.exit(1)
+  }
+
+  const clack = await import('@clack/prompts')
+  const yes = await clack.confirm({
+    message: 'This will delete all OpenACP data (~/.openacp). You will need to set up again. Continue?',
+    initialValue: false,
+  })
+  if (clack.isCancel(yes) || !yes) {
+    console.log('Aborted.')
+    return
+  }
+
+  const { uninstallAutoStart } = await import('../autostart.js')
+  uninstallAutoStart()
+
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const openacpDir = path.join(os.homedir(), '.openacp')
+  fs.rmSync(openacpDir, { recursive: true, force: true })
+
+  console.log('Reset complete. Run `openacp` to set up again.')
+}
