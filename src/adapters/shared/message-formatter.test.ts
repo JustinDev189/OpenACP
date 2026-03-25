@@ -52,6 +52,19 @@ describe("extractContentText", () => {
     expect(extractContentText({ input: "some input" })).toBe("some input");
     expect(extractContentText({ output: "some output" })).toBe("some output");
   });
+  it("recursively extracts non-string input/output", () => {
+    expect(extractContentText({ input: { text: "nested input" } })).toBe(
+      "nested input",
+    );
+    expect(extractContentText({ output: [{ text: "a" }, { text: "b" }] })).toBe(
+      "a\nb",
+    );
+  });
+  it("falls back to JSON.stringify for unrecognized objects", () => {
+    const result = extractContentText({ foo: "bar", baz: 42 });
+    expect(result).toContain("foo");
+    expect(result).toContain("bar");
+  });
   it("falls back to JSON.stringify for unrecognized objects", () => {
     const obj = { foo: "bar", count: 42 };
     const result = extractContentText(obj);
@@ -285,7 +298,23 @@ describe("formatOutgoingMessage", () => {
     expect(result.icon).toBe("📖");
     expect(result.metadata?.toolName).toBe("Read");
     expect(result.metadata?.toolStatus).toBe("in_progress");
-    // medium: no detail
+    // medium without content: no detail
+    expect(result.detail).toBeUndefined();
+  });
+
+  it("medium never shows inline detail (viewer links provide access)", () => {
+    const msg: OutgoingMessage = {
+      type: "tool_call",
+      text: "Read",
+      metadata: {
+        name: "Read",
+        kind: "read",
+        status: "completed",
+        rawInput: JSON.stringify({ file_path: "src/main.ts" }),
+        content: "const x = 1;",
+      },
+    };
+    const result = expectFormatted(msg, "medium");
     expect(result.detail).toBeUndefined();
   });
 
@@ -335,7 +364,6 @@ describe("formatOutgoingMessage", () => {
         content: "all tests pass",
       },
     };
-    // high to see detail
     const result = expectFormatted(msg, "high");
     expect(result.originalType).toBe("tool_update");
     expect(result.summary).toContain("✅");
@@ -556,7 +584,7 @@ describe("formatOutgoingMessage", () => {
       const result = formatOutgoingMessage(msg, v);
       expect(result).not.toBeNull();
       expect(result!.viewerLinks).toBeDefined();
-      expect(result!.viewerLinks![0].url).toBe("https://example.com/file/1");
+      expect(result!.viewerLinks!.file).toBe("https://example.com/file/1");
     }
   });
 

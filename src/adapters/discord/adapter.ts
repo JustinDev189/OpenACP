@@ -19,6 +19,7 @@ import type { OpenACPCore } from "../../core/core.js";
 import type { Session } from "../../core/session.js";
 import { log } from "../../core/log.js";
 import type { ViewerLinks, DisplayVerbosity } from "../shared/format-types.js";
+import { evaluateNoise } from "../shared/message-formatter.js";
 import {
   dispatchMessage,
   type MessageHandlers,
@@ -532,6 +533,13 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
     },
 
     onToolCall: async (ctx, content) => {
+      const meta = content.metadata ?? {};
+      const toolName = String(meta.name ?? content.text ?? "Tool");
+      const toolKind = String(meta.kind ?? "other");
+      const noiseAction = evaluateNoise(toolName, toolKind, meta.rawInput);
+      if (noiseAction === "hide" && this.verbosity !== "high") return;
+      if (noiseAction === "collapse" && this.verbosity === "low") return;
+
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.thread);
       await tracker.onToolCall();
       await this.draftManager.finalize(
@@ -539,7 +547,6 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
         ctx.thread,
         ctx.isAssistant,
       );
-      const meta = content.metadata ?? {};
       await this.toolTracker.trackNewCall(
         ctx.sessionId,
         ctx.thread,

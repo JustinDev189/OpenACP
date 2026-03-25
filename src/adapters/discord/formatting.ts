@@ -41,7 +41,7 @@ export function formatToolCall(
       : formatToolSummary(name, tool.rawInput);
   let text = `${si} **${label}**`;
   text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
-  if (verbosity === "high" && !tool.viewerLinks) {
+  if (verbosity === "high") {
     const details = stripCodeFences(extractContentText(tool.content));
     if (details) {
       text += `\n\`\`\`\n${truncateContent(details, 500)}\n\`\`\``;

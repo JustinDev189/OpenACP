@@ -51,6 +51,7 @@ import {
   type MessageHandlers,
 } from "../shared/message-dispatcher.js";
 import type { DisplayVerbosity } from "../shared/format-types.js";
+import { evaluateNoise } from "../shared/message-formatter.js";
 
 interface TelegramMessageCtx {
   sessionId: string;
@@ -464,7 +465,14 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       }
 
       // Check for pending workspace input from interactive /resume flow
-      if (await handlePendingResumeInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
+      if (
+        await handlePendingResumeInput(
+          ctx,
+          this.core,
+          this.telegramConfig.chatId,
+          this.assistantTopicId,
+        )
+      ) {
         return;
       }
 
@@ -631,13 +639,19 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     },
 
     onToolCall: async (ctx, content) => {
+      const meta = (content.metadata ?? {}) as Partial<ToolCallMeta>;
+      const toolName = meta.name ?? content.text ?? "Tool";
+      const toolKind = String(meta.kind ?? "other");
+      const noiseAction = evaluateNoise(toolName, toolKind, meta.rawInput);
+      if (noiseAction === "hide" && this.verbosity !== "high") return;
+      if (noiseAction === "collapse" && this.verbosity === "low") return;
+
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.threadId);
       await tracker.onToolCall();
       await this.draftManager.finalize(
         ctx.sessionId,
         this.assistantSession?.id,
       );
-      const meta = (content.metadata ?? {}) as Partial<ToolCallMeta>;
       await this.toolTracker.trackNewCall(
         ctx.sessionId,
         ctx.threadId,

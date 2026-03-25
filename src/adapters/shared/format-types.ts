@@ -29,14 +29,15 @@ export interface MessageMetadata {
   tokens?: number;
   contextSize?: number;
   cost?: number;
-  viewerLinks?: { type: "file" | "diff"; url: string; label: string }[];
+  viewerLinks?: ViewerLinks;
+  viewerFilePath?: string;
 }
 
 /** summary and detail are always plain text (never pre-escaped HTML/markdown) — renderers handle escaping */
 export interface FormattedMessage {
   summary: string;
   detail?: string;
-  viewerLinks?: { type: "file" | "diff"; url: string; label: string }[];
+  viewerLinks?: ViewerLinks;
   icon: string;
   originalType: string;
   style: MessageStyle;

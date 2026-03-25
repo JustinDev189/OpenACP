@@ -121,7 +121,7 @@ describe("formatToolCall", () => {
     expect(result).toContain('🔍 Grep "handleNewSession"');
   });
 
-  it("includes code block for content when no viewerLinks (high verbosity)", () => {
+  it("includes code block for content on high verbosity", () => {
     const result = formatToolCall(
       {
         id: "1",

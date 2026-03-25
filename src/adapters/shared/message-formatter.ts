@@ -5,6 +5,7 @@ import type {
   DisplayVerbosity,
   NoiseAction,
   NoiseRule,
+  ViewerLinks,
 } from "./format-types.js";
 import { STATUS_ICONS, KIND_ICONS } from "./format-types.js";
 import { formatTokens } from "./format-utils.js";
@@ -32,8 +33,8 @@ export function extractContentText(content: unknown, depth = 0): string {
     }
     return extractContentText(obj.content, depth + 1);
   }
-  if (obj.input && typeof obj.input === "string") return obj.input;
-  if (obj.output && typeof obj.output === "string") return obj.output;
+  if (obj.input) return extractContentText(obj.input, depth + 1);
+  if (obj.output) return extractContentText(obj.output, depth + 1);
 
   // Fallback: serialize unrecognized objects so edge-case agent responses are not silently dropped
   try {
@@ -191,23 +192,12 @@ export function evaluateNoise(
 
 // --- Step 8: formatOutgoingMessage with verbosity + noise + viewerLinks ---
 
-function buildViewerLinks(
+function extractViewerLinks(
   meta: Record<string, unknown>,
-): { type: "file" | "diff"; url: string; label: string }[] | undefined {
-  const vl = meta.viewerLinks as Record<string, string> | undefined;
-  if (!vl) return undefined;
-
-  const filePath = String(meta.viewerFilePath ?? "file");
-  const links: { type: "file" | "diff"; url: string; label: string }[] = [];
-  if (vl.file)
-    links.push({ type: "file", url: vl.file, label: `📄 View ${filePath}` });
-  if (vl.diff)
-    links.push({
-      type: "diff",
-      url: vl.diff,
-      label: `📝 View diff — ${filePath}`,
-    });
-  return links.length > 0 ? links : undefined;
+): ViewerLinks | undefined {
+  const vl = meta.viewerLinks as ViewerLinks | undefined;
+  if (!vl || (!vl.file && !vl.diff)) return undefined;
+  return vl;
 }
 
 function formatToolMessage(
@@ -226,7 +216,7 @@ function formatToolMessage(
   const displayTitle = meta.displayTitle as string | undefined;
   const statusIcon = STATUS_ICONS[status] ?? "⏳";
   const kindIcon = KIND_ICONS[kind] ?? "🔧";
-  const viewerLinks = buildViewerLinks(meta);
+  const viewerLinks = extractViewerLinks(meta);
 
   const noiseAction = evaluateNoise(name, kind, rawInput);
 
@@ -258,6 +248,7 @@ function formatToolMessage(
       ? `${statusIcon} ${formatToolTitle(name, rawInput, displayTitle)}`
       : `${statusIcon} ${formatToolSummary(name, rawInput, displaySummary)}`;
 
+  // high: full content; medium/low: no inline content (viewer links provide access)
   const detail =
     verbosity === "high"
       ? extractContentText(meta.content) || undefined

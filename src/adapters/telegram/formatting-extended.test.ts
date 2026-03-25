@@ -142,7 +142,7 @@ describe("formatToolCall", () => {
     expect(result).toContain("Custom");
   });
 
-  it("shows content when no viewer links (high verbosity)", () => {
+  it("shows content on high verbosity", () => {
     const result = formatToolCall(
       {
         id: "tc-1",
@@ -180,7 +180,7 @@ describe("formatToolCall", () => {
     expect(result).not.toContain("should not appear");
   });
 
-  it("truncates long content (high verbosity)", () => {
+  it("truncates long content on high verbosity", () => {
     const longContent = "x".repeat(4000);
     const result = formatToolCall(
       {
@@ -213,7 +213,7 @@ describe("formatToolCall", () => {
     expect(result).not.toContain("<pre>");
   });
 
-  it("extracts text from ACP content blocks (high verbosity)", () => {
+  it("extracts text from ACP content blocks (high)", () => {
     const result = formatToolCall(
       {
         id: "tc-1",
@@ -226,7 +226,7 @@ describe("formatToolCall", () => {
     expect(result).toContain("extracted text");
   });
 
-  it("extracts text from array of content blocks (high verbosity)", () => {
+  it("extracts text from array of content blocks (high)", () => {
     const result = formatToolCall(
       {
         id: "tc-1",
