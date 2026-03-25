@@ -4,7 +4,7 @@ import {
   formatTokens,
   truncateContent,
   splitMessage,
-} from "./format-utils.js";
+} from "../format-utils.js";
 
 describe("progressBar", () => {
   it("renders progress bar at 0.5 ratio", () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ThinkingIndicator, UsageMessage, PlanCard, ActivityTracker } from './activity.js'
-import type { TelegramSendQueue } from './send-queue.js'
+import { ThinkingIndicator, UsageMessage, PlanCard, ActivityTracker } from '../activity.js'
+import type { TelegramSendQueue } from '../send-queue.js'
 
 // Minimal mock for TelegramSendQueue: runs the fn immediately, returns result
 function makeMockQueue(): TelegramSendQueue {
@@ -127,7 +127,7 @@ describe('PlanCard', () => {
   let queue: TelegramSendQueue
   let card: PlanCard
 
-  const entries: import('../../core/types.js').PlanEntry[] = [
+  const entries: import('../../../core/types.js').PlanEntry[] = [
     { content: 'Research', status: 'completed', priority: 'high' },
     { content: 'Write', status: 'in_progress', priority: 'high' },
     { content: 'Review', status: 'pending', priority: 'low' },
@@ -199,7 +199,7 @@ describe('PlanCard', () => {
   })
 
   it('shows correct progress bar format', async () => {
-    const singleDone: import('../../core/types.js').PlanEntry[] = [
+    const singleDone: import('../../../core/types.js').PlanEntry[] = [
       { content: 'Task A', status: 'completed', priority: 'high' },
       { content: 'Task B', status: 'completed', priority: 'high' },
       { content: 'Task C', status: 'pending', priority: 'low' },
@@ -289,7 +289,7 @@ describe('ActivityTracker', () => {
   })
 
   it('onNewPrompt() resets hasPlanCard', async () => {
-    const entries: import('../../core/types.js').PlanEntry[] = [
+    const entries: import('../../../core/types.js').PlanEntry[] = [
       { content: 'Task', status: 'pending', priority: 'high' },
     ]
     await tracker.onPlan(entries)
@@ -314,7 +314,7 @@ describe('ActivityTracker', () => {
   })
 
   it('onComplete() finalizes plan when hasPlanCard is true', async () => {
-    const entries: import('../../core/types.js').PlanEntry[] = [
+    const entries: import('../../../core/types.js').PlanEntry[] = [
       { content: 'Task', status: 'completed', priority: 'high' },
     ]
     await tracker.onPlan(entries)

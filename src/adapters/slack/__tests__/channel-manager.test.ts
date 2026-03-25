@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackChannelManager } from "./channel-manager.js";
-import type { ISlackSendQueue } from "./send-queue.js";
-import type { SlackChannelConfig } from "./types.js";
+import { SlackChannelManager } from "../channel-manager.js";
+import type { ISlackSendQueue } from "../send-queue.js";
+import type { SlackChannelConfig } from "../types.js";
 
 function makeConfig(overrides: Partial<SlackChannelConfig> = {}): SlackChannelConfig {
   return {

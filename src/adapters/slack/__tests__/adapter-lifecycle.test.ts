@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { SlackTextBuffer } from "./text-buffer.js";
+import { SlackTextBuffer } from "../text-buffer.js";
 
 function createMockQueue() {
   return { enqueue: vi.fn().mockResolvedValue({ ts: "123" }) } as any;

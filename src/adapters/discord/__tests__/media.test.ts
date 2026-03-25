@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { classifyAttachmentType, buildFallbackText, isAttachmentTooLarge, downloadDiscordAttachment } from './media.js'
+import { classifyAttachmentType, buildFallbackText, isAttachmentTooLarge, downloadDiscordAttachment } from '../media.js'
 
 describe('classifyAttachmentType', () => {
   it('classifies image/* as image', () => {

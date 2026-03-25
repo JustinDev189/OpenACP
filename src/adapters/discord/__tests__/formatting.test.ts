@@ -4,8 +4,8 @@ import {
   formatUsage,
   formatToolCall,
   formatPlan,
-} from "./formatting.js";
-import type { PlanEntry } from "../../core/types.js";
+} from "../formatting.js";
+import type { PlanEntry } from "../../../core/types.js";
 
 describe("splitMessage", () => {
   it("returns array with original text when within maxLength", () => {

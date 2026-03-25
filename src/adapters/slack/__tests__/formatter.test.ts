@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SlackFormatter, markdownToMrkdwn } from "./formatter.js";
+import { SlackFormatter, markdownToMrkdwn } from "../formatter.js";
 // Import OutgoingMessage type from core
 
 const fmt = new SlackFormatter();

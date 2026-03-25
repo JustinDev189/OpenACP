@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackSendQueue } from "./send-queue.js";
+import { SlackSendQueue } from "../send-queue.js";
 import type { WebClient } from "@slack/web-api";
 
 describe("SlackSendQueue", () => {

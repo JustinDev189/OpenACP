@@ -7,7 +7,7 @@ import {
   formatPlan,
   formatUsage,
   splitMessage,
-} from "./formatting.js";
+} from "../formatting.js";
 
 describe("escapeHtml", () => {
   it("escapes ampersand", () => {

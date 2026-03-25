@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackTextBuffer } from "./text-buffer.js";
-import type { ISlackSendQueue } from "./send-queue.js";
-import { isAudioClip } from "./utils.js";
+import { SlackTextBuffer } from "../text-buffer.js";
+import type { ISlackSendQueue } from "../send-queue.js";
+import { isAudioClip } from "../utils.js";
 
 function createMockQueue(): ISlackSendQueue {
   return {

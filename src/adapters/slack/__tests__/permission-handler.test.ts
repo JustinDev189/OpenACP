@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackPermissionHandler } from "./permission-handler.js";
-import type { ISlackSendQueue } from "./send-queue.js";
+import { SlackPermissionHandler } from "../permission-handler.js";
+import type { ISlackSendQueue } from "../send-queue.js";
 
 function createMockApp() {
   let actionHandler: Function | undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackTextBuffer } from "./text-buffer.js";
+import { SlackTextBuffer } from "../text-buffer.js";
 
 describe("SlackTextBuffer", () => {
   it("flushes buffered text as a single message", async () => {

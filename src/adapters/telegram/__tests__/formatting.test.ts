@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatUsage } from "./formatting.js";
+import { formatUsage } from "../formatting.js";
 
 describe("formatUsage", () => {
   it("shows progress bar with tokens and contextSize (high)", () => {

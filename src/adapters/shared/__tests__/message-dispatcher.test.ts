@@ -3,8 +3,8 @@ import {
   dispatchMessage,
   shouldDispatch,
   type MessageHandlers,
-} from "./message-dispatcher.js";
-import type { OutgoingMessage } from "../../core/types.js";
+} from "../message-dispatcher.js";
+import type { OutgoingMessage } from "../../../core/types.js";
 
 function createMockHandlers(): MessageHandlers<string> {
   return {

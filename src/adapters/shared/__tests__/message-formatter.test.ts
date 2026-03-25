@@ -4,7 +4,7 @@ import {
   formatToolSummary,
   formatToolTitle,
   evaluateNoise,
-} from "./message-formatter.js";
+} from "../message-formatter.js";
 
 describe("extractContentText", () => {
   it("returns string content as-is", () => {

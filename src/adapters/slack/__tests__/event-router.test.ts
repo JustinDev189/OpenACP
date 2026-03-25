@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackEventRouter } from "./event-router.js";
-import type { SlackChannelConfig } from "./types.js";
+import { SlackEventRouter } from "../event-router.js";
+import type { SlackChannelConfig } from "../types.js";
 
 function createMockApp() {
   const handlers: Record<string, Function> = {};

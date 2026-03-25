@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toSlug } from "./slug.js";
+import { toSlug } from "../slug.js";
 
 describe("toSlug", () => {
   it("lowercases and replaces spaces with dashes", () => {
