@@ -2,17 +2,19 @@
 import fs from "node:fs";
 import { App } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
-import {
-  ChannelAdapter,
-  type ChannelConfig,
-  type OpenACPCore,
-  type OutgoingMessage,
-  type PermissionRequest,
-  type NotificationMessage,
-} from "../../core/index.js";
-import type { Attachment } from "../../core/types.js";
+import type { OpenACPCore } from "../../core/core.js";
+import type {
+  OutgoingMessage,
+  PermissionRequest,
+  NotificationMessage,
+  Attachment,
+} from "../../core/types.js";
+import type { AdapterCapabilities } from "../../core/channel.js";
 import type { FileService } from "../../core/file-service.js";
 import { createChildLogger } from "../../core/log.js";
+import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";
+import type { IRenderer } from "../shared/rendering/renderer.js";
+import { BaseRenderer } from "../shared/rendering/renderer.js";
 const log = createChildLogger({ module: "slack" });
 
 import type { SlackChannelConfig } from "./types.js";
@@ -26,8 +28,15 @@ import { SlackTextBuffer } from "./text-buffer.js";
 import { toSlug } from "./slug.js";
 import { isAudioClip } from "./utils.js";
 
-export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
+export class SlackAdapter extends MessagingAdapter {
   readonly name = 'slack';
+  readonly renderer: IRenderer = new BaseRenderer();
+  readonly capabilities: AdapterCapabilities = {
+    streaming: true, richFormatting: true, threads: true,
+    reactions: false, fileUpload: true, voice: true,
+  };
+
+  private core: OpenACPCore;
   private app!: App;
   private webClient!: WebClient;
   private queue!: SlackSendQueue;
@@ -42,7 +51,11 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
   private fileService!: FileService;
 
   constructor(core: OpenACPCore, config: SlackChannelConfig) {
-    super(core, config as unknown as ChannelConfig);
+    super(
+      { configManager: core.configManager },
+      { ...config as Record<string, unknown>, maxMessageLength: 3000, enabled: config.enabled ?? true } as MessagingAdapterConfig,
+    );
+    this.core = core;
     this.slackConfig = config;
     this.formatter = new SlackFormatter();
   }
@@ -281,7 +294,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     log.info("Slack adapter stopped");
   }
 
-  // --- ChannelAdapter implementations ---
+  // --- MessagingAdapter implementations ---
 
   async createSessionThread(sessionId: string, name: string): Promise<string> {
     const meta = await this.channelManager.createChannel(sessionId, name);
