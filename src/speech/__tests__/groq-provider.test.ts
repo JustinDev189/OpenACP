@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { GroqSTT } from "../speech/providers/groq.js";
+import { GroqSTT } from "../providers/groq.js";
 
 describe("GroqSTT", () => {
   let originalFetch: typeof global.fetch;

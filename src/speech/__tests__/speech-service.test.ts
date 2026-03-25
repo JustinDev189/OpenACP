@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { SpeechService } from "../speech/speech-service.js";
-import type { STTProvider, SpeechServiceConfig } from "../speech/types.js";
+import { SpeechService } from "../speech-service.js";
+import type { STTProvider, SpeechServiceConfig } from "../types.js";
 
 function makeConfig(overrides?: Partial<SpeechServiceConfig>): SpeechServiceConfig {
   return {

@@ -79,7 +79,7 @@ export {
   getConfigValue,
   type ConfigFieldDef,
 } from "./config/config-registry.js";
-export { SpeechService, GroqSTT } from "./speech/index.js";
+export { SpeechService, GroqSTT } from "../speech/index.js";
 export type {
   STTProvider,
   TTSProvider,
@@ -89,7 +89,7 @@ export type {
   TTSResult,
   SpeechServiceConfig,
   SpeechProviderConfig,
-} from "./speech/index.js";
+} from "../speech/index.js";
 export type { ContextProvider, ContextQuery, ContextOptions, ContextResult, SessionInfo as ContextSessionInfo, SessionListResult } from "./context/context-provider.js";
 export { ContextManager } from "./context/context-manager.js";
 export { EntireProvider } from "./context/entire/entire-provider.js";

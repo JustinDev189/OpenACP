@@ -6,7 +6,7 @@ import { TypedEmitter } from "../../utils/typed-emitter.js";
 import type { AgentInstance } from "../../agents/agent-instance.js";
 import type { AgentManager } from "../../agents/agent-manager.js";
 import type { SessionManager } from "../session-manager.js";
-import type { SpeechService } from "../../speech/index.js";
+import type { SpeechService } from "../../../speech/index.js";
 import type { AgentEvent } from "../../types.js";
 
 function createMockAgentInstance(sessionId = "agent-session-1"): AgentInstance {

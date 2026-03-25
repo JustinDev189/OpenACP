@@ -31,7 +31,7 @@ vi.mock("msedge-tts", () => ({
 }));
 
 // Import after mock setup
-import { EdgeTTS } from "../speech/providers/edge-tts.js";
+import { EdgeTTS } from "../providers/edge-tts.js";
 
 describe("EdgeTTS", () => {
   beforeEach(() => {

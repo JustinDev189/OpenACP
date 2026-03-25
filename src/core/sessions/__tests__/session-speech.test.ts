@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Session } from "../session.js";
 import type { AgentInstance } from "../../agents/agent-instance.js";
-import type { SpeechService } from "../../speech/index.js";
+import type { SpeechService } from "../../../speech/index.js";
 
 vi.mock("node:fs", () => ({
   promises: {

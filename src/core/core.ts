@@ -20,7 +20,7 @@ import { getAgentCapabilities } from "./agents/agent-registry.js";
 import { AgentCatalog } from "./agents/agent-catalog.js";
 import { EventBus } from "./event-bus.js";
 import { createChildLogger } from "./utils/log.js";
-import { SpeechService, GroqSTT, EdgeTTS } from "./speech/index.js";
+import { SpeechService, GroqSTT, EdgeTTS } from "../speech/index.js";
 import { ContextManager } from "./context/context-manager.js";
 import { EntireProvider } from "./context/entire/entire-provider.js";
 import type { ContextQuery, ContextOptions, ContextResult } from "./context/context-provider.js";

@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { AgentManager } from "../agents/agent-manager.js";
 import type { SessionManager } from "./session-manager.js";
-import type { SpeechService } from "../speech/index.js";
+import type { SpeechService } from "../../speech/index.js";
 import type { EventBus } from "../event-bus.js";
 import type { UsageStore } from "./usage-store.js";
 import type { UsageBudget } from "./usage-budget.js";
