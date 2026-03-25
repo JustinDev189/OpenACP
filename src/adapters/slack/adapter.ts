@@ -352,7 +352,11 @@ export class SlackAdapter extends MessagingAdapter {
     if (buf) { buf.destroy(); this.textBuffers.delete(sessionId); }
   }
 
-  private _currentMeta!: SlackSessionMeta;
+  private _sessionMetas = new Map<string, SlackSessionMeta>();
+
+  private getSessionMeta(sessionId: string): SlackSessionMeta | undefined {
+    return this._sessionMetas.get(sessionId);
+  }
 
   private getTextBuffer(sessionId: string, channelId: string): SlackTextBuffer {
     let buf = this.textBuffers.get(sessionId);
@@ -370,22 +374,28 @@ export class SlackAdapter extends MessagingAdapter {
       return;
     }
 
-    // Store meta for handler methods to use
-    this._currentMeta = meta;
-    await super.sendMessage(sessionId, content);
+    // Store meta per-session so concurrent calls for different sessions don't overwrite each other
+    this._sessionMetas.set(sessionId, meta);
+    try {
+      await super.sendMessage(sessionId, content);
+    } finally {
+      this._sessionMetas.delete(sessionId);
+    }
   }
 
   // --- Handler overrides (dispatched by base class) ---
 
   protected async handleText(sessionId: string, content: OutgoingMessage): Promise<void> {
-    const meta = this._currentMeta;
+    const meta = this.getSessionMeta(sessionId);
+    if (!meta) return;
     // Text chunks are buffered and flushed as a single message after idle timeout
     const buf = this.getTextBuffer(sessionId, meta.channelId);
     buf.append(content.text ?? "");
   }
 
   protected async handleSessionEnd(sessionId: string, content: OutgoingMessage): Promise<void> {
-    const meta = this._currentMeta;
+    const meta = this.getSessionMeta(sessionId);
+    if (!meta) return;
     // Flush any pending text first
     await this.flushTextBuffer(sessionId);
 
@@ -404,7 +414,8 @@ export class SlackAdapter extends MessagingAdapter {
   }
 
   protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
-    const meta = this._currentMeta;
+    const meta = this.getSessionMeta(sessionId);
+    if (!meta) return;
     // Flush any pending text first
     await this.flushTextBuffer(sessionId);
 
@@ -423,8 +434,8 @@ export class SlackAdapter extends MessagingAdapter {
   }
 
   protected async handleAttachment(sessionId: string, content: OutgoingMessage): Promise<void> {
-    const meta = this._currentMeta;
-    if (!content.attachment) return;
+    const meta = this.getSessionMeta(sessionId);
+    if (!meta || !content.attachment) return;
     if (content.attachment.type === "audio") {
       try {
         await this.uploadAudioFile(meta.channelId, content.attachment);
@@ -476,7 +487,8 @@ export class SlackAdapter extends MessagingAdapter {
   }
 
   private async postFormattedMessage(sessionId: string, content: OutgoingMessage): Promise<void> {
-    const meta = this._currentMeta;
+    const meta = this.getSessionMeta(sessionId);
+    if (!meta) return;
     const blocks = this.formatter.formatOutgoing(content);
     if (blocks.length === 0) return;
 
