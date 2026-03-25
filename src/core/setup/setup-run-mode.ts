@@ -39,11 +39,16 @@ export async function setupRunMode(opts?: {
     }),
   );
 
+  const wasDaemon = existing?.runMode === 'daemon';
+
   if (mode === 'daemon') {
     const { installAutoStart, isAutoStartSupported } = await import('../autostart.js');
+    const { muteLogger, unmuteLogger } = await import('../log.js');
     const autoStart = isAutoStartSupported();
     if (autoStart) {
+      muteLogger();
       const result = installAutoStart(expandHome('~/.openacp/logs'));
+      unmuteLogger();
       if (result.success) {
         console.log(ok('Auto-start on boot enabled'));
       } else {
@@ -51,6 +56,32 @@ export async function setupRunMode(opts?: {
       }
     }
     return { runMode: 'daemon', autoStart };
+  }
+
+  // Switching from daemon → foreground: stop daemon + uninstall autostart
+  if (wasDaemon) {
+    const { muteLogger, unmuteLogger } = await import('../log.js');
+    muteLogger();
+    try {
+      const { stopDaemon } = await import('../daemon.js');
+      const result = await stopDaemon();
+      unmuteLogger();
+      if (result.stopped) {
+        console.log(ok(`Daemon stopped (was PID ${result.pid})`));
+      }
+    } catch {
+      unmuteLogger();
+      // Daemon may not be running
+    }
+    muteLogger();
+    try {
+      const { uninstallAutoStart } = await import('../autostart.js');
+      uninstallAutoStart();
+      unmuteLogger();
+    } catch {
+      unmuteLogger();
+      // ignore
+    }
   }
 
   return { runMode: 'foreground', autoStart: false };

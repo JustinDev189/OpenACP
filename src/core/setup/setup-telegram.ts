@@ -249,16 +249,30 @@ export async function setupTelegram(opts?: {
   let chatId: number;
   const existingChatId = (existing as { chatId?: number } | undefined)?.chatId;
 
-  // If existing chatId, offer to keep it
   if (existingChatId && existingChatId !== 0) {
-    const keepChat = guardCancel(
-      await clack.confirm({
-        message: `Keep current chat ID (${existingChatId})?`,
-        initialValue: true,
+    const chatIdAction = guardCancel(
+      await clack.select({
+        message: `Group chat ID: ${existingChatId}`,
+        options: [
+          { value: "keep" as const, label: "Keep current" },
+          { value: "manual" as const, label: "Enter new chat ID" },
+          { value: "detect" as const, label: "Auto-detect from group" },
+        ],
+        initialValue: "keep" as const,
       }),
     );
-    if (keepChat) {
+    if (chatIdAction === "keep") {
       chatId = existingChatId;
+      console.log(ok("Keeping current group chat ID"));
+    } else if (chatIdAction === "manual") {
+      chatId = await promptManualChatId();
+      // Validate the manually entered chat ID
+      const chatResult = await validateChatId(botToken, chatId);
+      if (chatResult.ok) {
+        console.log(ok(`Group: ${c.bold}${chatResult.title}${c.reset}${c.green}${chatResult.isForum ? " (Topics enabled)" : ""}`));
+      } else {
+        console.log(fail(chatResult.error));
+      }
     } else {
       chatId = await detectAndValidateChatId(botToken);
     }
