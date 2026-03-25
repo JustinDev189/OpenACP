@@ -1,5 +1,5 @@
 import { installPlugin, uninstallPlugin, listPlugins } from '../core/plugin-manager.js'
-import { readApiPort, removeStalePortFile, apiCall } from '../core/api-client.js'
+import { readApiPort, removeStalePortFile, apiCall } from '../core/api/api-client.js'
 import { getCurrentVersion, getLatestVersion, compareVersions, runUpdate, checkAndPromptUpdate } from './version.js'
 
 function wantsHelp(args: string[]): boolean {
@@ -1123,7 +1123,7 @@ as a messaging thread. Requires a running daemon.
   }
 
   try {
-    const { apiCall } = await import('../core/api-client.js')
+    const { apiCall } = await import('../core/api/api-client.js')
     const res = await apiCall(port, '/api/sessions/adopt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

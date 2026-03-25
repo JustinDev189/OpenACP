@@ -6,7 +6,7 @@ import { loadAdapterFactory } from './core/plugin-manager.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log, muteLogger, unmuteLogger } from './core/utils/log.js'
 import { TelegramAdapter } from './adapters/telegram/index.js'
 import type { TelegramChannelConfig } from './adapters/telegram/index.js'
-import { ApiServer } from './core/api-server.js'
+import { ApiServer } from './core/api/api-server.js'
 import { TopicManager } from './core/topic-manager.js'
 
 export const RESTART_EXIT_CODE = 75

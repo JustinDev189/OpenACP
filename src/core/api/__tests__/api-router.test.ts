@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Router } from "../api/router.js";
+import { Router } from "../router.js";
 
 describe("Router", () => {
   it("matches exact path", () => {

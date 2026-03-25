@@ -60,9 +60,9 @@ export {
   isAutoStartSupported,
 } from "./autostart.js";
 export { runConfigEditor } from "./config/config-editor.js";
-export { ApiServer, type ApiConfig } from "./api-server.js";
-export { SSEManager } from "./sse-manager.js";
-export { StaticServer } from "./static-server.js";
+export { ApiServer, type ApiConfig } from "./api/api-server.js";
+export { SSEManager } from "./api/sse-manager.js";
+export { StaticServer } from "./api/static-server.js";
 export { EventBus, type EventBusEvents } from "./event-bus.js";
 export {
   TopicManager,
