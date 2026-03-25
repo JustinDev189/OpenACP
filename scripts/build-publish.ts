@@ -46,6 +46,27 @@ fs.chmodSync(cliPath, 0o755)
 // 5. Generate package.json
 const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'))
 
+// Only include external (non-bundled) dependencies in published package.
+// This list must match the `external` array in tsup.config.ts.
+// Bundled deps (like msedge-tts) are excluded so npm users don't hit
+// preinstall restrictions from packages that enforce pnpm-only.
+const externalDeps = new Set([
+  'grammy',
+  'zod',
+  'nanoid',
+  '@agentclientprotocol/sdk',
+  '@inquirer/prompts',
+  'pino',
+  'pino-pretty',
+  'pino-roll',
+])
+const publishDeps: Record<string, string> = {}
+for (const [dep, version] of Object.entries(rootPkg.dependencies as Record<string, string>)) {
+  if (externalDeps.has(dep)) {
+    publishDeps[dep] = version
+  }
+}
+
 const publishPkg = {
   name: '@openacp/cli',
   version: rootPkg.version,
@@ -62,7 +83,7 @@ const publishPkg = {
   },
   files: ['dist/', 'README.md'],
   engines: { node: '>=20' },
-  dependencies: rootPkg.dependencies,
+  dependencies: publishDeps,
   repository: {
     type: 'git',
     url: 'https://github.com/Open-ACP/OpenACP',
