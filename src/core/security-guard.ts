@@ -1,5 +1,5 @@
 import type { ConfigManager } from "./config/config.js";
-import type { SessionManager } from "./session-manager.js";
+import type { SessionManager } from "./sessions/session-manager.js";
 import type { IncomingMessage } from "./types.js";
 
 export class SecurityGuard {

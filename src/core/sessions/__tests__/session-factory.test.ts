@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SessionFactory } from "../session-factory.js";
 import { Session } from "../session.js";
-import { EventBus } from "../event-bus.js";
-import { TypedEmitter } from "../typed-emitter.js";
-import type { AgentInstance } from "../agents/agent-instance.js";
-import type { AgentManager } from "../agents/agent-manager.js";
+import { EventBus } from "../../event-bus.js";
+import { TypedEmitter } from "../../typed-emitter.js";
+import type { AgentInstance } from "../../agents/agent-instance.js";
+import type { AgentManager } from "../../agents/agent-manager.js";
 import type { SessionManager } from "../session-manager.js";
-import type { SpeechService } from "../speech/index.js";
-import type { AgentEvent } from "../types.js";
+import type { SpeechService } from "../../speech/index.js";
+import type { AgentEvent } from "../../types.js";
 
 function createMockAgentInstance(sessionId = "agent-session-1"): AgentInstance {
   const emitter = new TypedEmitter<{

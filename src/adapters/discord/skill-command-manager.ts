@@ -1,7 +1,7 @@
 import type { Message, TextChannel, ThreadChannel } from 'discord.js'
 import { log } from '../../core/log.js'
 import type { AgentCommand } from '../../core/types.js'
-import type { SessionManager } from '../../core/session-manager.js'
+import type { SessionManager } from '../../core/sessions/session-manager.js'
 import type { DiscordPlatformData } from '../../core/types.js'
 import type { DiscordSendQueue } from './send-queue.js'
 

@@ -1,4 +1,4 @@
-import type { PermissionRequest } from "./types.js";
+import type { PermissionRequest } from "../types.js";
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 

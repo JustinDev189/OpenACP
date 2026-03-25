@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { PermissionGate } from "../permission-gate.js";
-import type { PermissionRequest } from "../types.js";
+import type { PermissionRequest } from "../../types.js";
 
 function makeRequest(id = "req-1"): PermissionRequest {
   return {

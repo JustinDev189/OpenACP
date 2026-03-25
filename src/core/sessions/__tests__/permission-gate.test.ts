@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { PermissionGate } from '../permission-gate.js'
-import type { PermissionRequest } from '../types.js'
+import type { PermissionRequest } from '../../types.js'
 
 const mockRequest: PermissionRequest = {
   id: 'req-1',

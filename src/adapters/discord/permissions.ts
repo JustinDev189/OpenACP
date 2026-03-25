@@ -2,7 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js'
 import type { ButtonInteraction, TextChannel, ThreadChannel } from 'discord.js'
 import { nanoid } from 'nanoid'
 import type { PermissionRequest, NotificationMessage } from '../../core/types.js'
-import type { Session } from '../../core/session.js'
+import type { Session } from '../../core/sessions/session.js'
 import { log } from '../../core/log.js'
 import { buildDeepLink } from './forums.js'
 

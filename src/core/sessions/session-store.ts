@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { SessionRecord } from "./types.js";
-import { createChildLogger } from "./log.js";
+import type { SessionRecord } from "../types.js";
+import { createChildLogger } from "../log.js";
 
 const log = createChildLogger({ module: "session-store" });
 

@@ -1,11 +1,11 @@
 import { nanoid } from "nanoid";
-import type { AgentInstance } from "./agents/agent-instance.js";
-import type { AgentEvent, Attachment, PermissionRequest, SessionStatus } from "./types.js";
-import { TypedEmitter } from "./typed-emitter.js";
+import type { AgentInstance } from "../agents/agent-instance.js";
+import type { AgentEvent, Attachment, PermissionRequest, SessionStatus } from "../types.js";
+import { TypedEmitter } from "../typed-emitter.js";
 import { PromptQueue } from "./prompt-queue.js";
 import { PermissionGate } from "./permission-gate.js";
-import { createChildLogger, createSessionLogger, type Logger } from "./log.js";
-import type { SpeechService } from "./speech/index.js";
+import { createChildLogger, createSessionLogger, type Logger } from "../log.js";
+import type { SpeechService } from "../speech/index.js";
 import * as fs from "node:fs";
 const moduleLog = createChildLogger({ module: "session" });
 

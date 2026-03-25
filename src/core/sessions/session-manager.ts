@@ -1,7 +1,7 @@
-import type { AgentManager } from "./agents/agent-manager.js";
+import type { AgentManager } from "../agents/agent-manager.js";
 import { Session } from "./session.js";
 import type { SessionStore } from "./session-store.js";
-import type { EventBus } from "./event-bus.js";
+import type { EventBus } from "../event-bus.js";
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
@@ -75,14 +75,14 @@ export class SessionManager {
 
   getRecordByAgentSessionId(
     agentSessionId: string,
-  ): import("./types.js").SessionRecord | undefined {
+  ): import("../types.js").SessionRecord | undefined {
     return this.store?.findByAgentSessionId(agentSessionId);
   }
 
   getRecordByThread(
     channelId: string,
     threadId: string,
-  ): import("./types.js").SessionRecord | undefined {
+  ): import("../types.js").SessionRecord | undefined {
     return this.store?.findByPlatform(
       channelId,
       (p) => String(p.topicId) === threadId || p.threadId === threadId,
@@ -95,7 +95,7 @@ export class SessionManager {
 
   async patchRecord(
     sessionId: string,
-    patch: Partial<import("./types.js").SessionRecord>,
+    patch: Partial<import("../types.js").SessionRecord>,
   ): Promise<void> {
     if (!this.store) return;
     const record = this.store.get(sessionId);
@@ -103,13 +103,13 @@ export class SessionManager {
       await this.store.save({ ...record, ...patch });
     } else if (patch.sessionId) {
       // Initial save — treat patch as full record
-      await this.store.save(patch as import("./types.js").SessionRecord);
+      await this.store.save(patch as import("../types.js").SessionRecord);
     }
   }
 
   getSessionRecord(
     sessionId: string,
-  ): import("./types.js").SessionRecord | undefined {
+  ): import("../types.js").SessionRecord | undefined {
     return this.store?.get(sessionId);
   }
 
@@ -135,7 +135,7 @@ export class SessionManager {
 
   listRecords(filter?: {
     statuses?: string[];
-  }): import("./types.js").SessionRecord[] {
+  }): import("../types.js").SessionRecord[] {
     if (!this.store) return [];
     let records = this.store.list();
     if (filter?.statuses?.length) {

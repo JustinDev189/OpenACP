@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { JsonFileSessionStore } from '../core/session-store.js'
+import { JsonFileSessionStore } from '../core/sessions/session-store.js'
 import type { SessionRecord } from '../core/types.js'
 
 function createRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {

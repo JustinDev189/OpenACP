@@ -1,7 +1,7 @@
 import type { Bot, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import type { OpenACPCore } from "../../../core/index.js";
-import type { Session } from "../../../core/session.js";
+import type { Session } from "../../../core/sessions/session.js";
 import { escapeHtml } from "../formatting.js";
 import { createSessionTopic, renameSessionTopic, buildDeepLink } from "../topics.js";
 import { createChildLogger } from "../../../core/log.js";

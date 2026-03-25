@@ -1,4 +1,4 @@
-import type { SessionManager } from './session-manager.js'
+import type { SessionManager } from './sessions/session-manager.js'
 import type { IChannelAdapter } from './channel.js'
 import type { SessionRecord } from './types.js'
 import { createChildLogger } from './log.js'

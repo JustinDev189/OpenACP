@@ -28,23 +28,23 @@ export {
 } from "./config/config.js";
 export { AgentInstance } from "./agents/agent-instance.js";
 export { AgentManager } from "./agents/agent-manager.js";
-export { Session, type SessionEvents } from "./session.js";
+export { Session, type SessionEvents } from "./sessions/session.js";
 export { TypedEmitter } from "./typed-emitter.js";
-export { PromptQueue } from "./prompt-queue.js";
-export { PermissionGate } from "./permission-gate.js";
+export { PromptQueue } from "./sessions/prompt-queue.js";
+export { PermissionGate } from "./sessions/permission-gate.js";
 export { MessageTransformer } from "./message-transformer.js";
 export { FileService } from "./file-service.js";
-export { SessionManager } from "./session-manager.js";
+export { SessionManager } from "./sessions/session-manager.js";
 export { SecurityGuard } from "./security-guard.js";
-export { SessionBridge, type BridgeDeps } from "./session-bridge.js";
+export { SessionBridge, type BridgeDeps } from "./sessions/session-bridge.js";
 export {
   SessionFactory,
   type SessionCreateParams,
   type SideEffectDeps,
-} from "./session-factory.js";
+} from "./sessions/session-factory.js";
 export { OpenACPCore } from "./core.js";
-export { UsageStore } from "./usage-store.js";
-export { UsageBudget } from "./usage-budget.js";
+export { UsageStore } from "./sessions/usage-store.js";
+export { UsageBudget } from "./sessions/usage-budget.js";
 export {
   AdapterFactory,
   installPlugin,

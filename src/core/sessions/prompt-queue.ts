@@ -1,4 +1,4 @@
-import type { Attachment } from './types.js'
+import type { Attachment } from '../types.js'
 
 /**
  * Serial prompt queue — ensures prompts are processed one at a time.

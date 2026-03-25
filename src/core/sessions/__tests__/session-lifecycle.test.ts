@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Session } from '../session.js'
-import { TypedEmitter } from '../typed-emitter.js'
-import type { AgentEvent } from '../types.js'
+import { TypedEmitter } from '../../typed-emitter.js'
+import type { AgentEvent } from '../../types.js'
 
 function mockAgentInstance() {
   const emitter = new TypedEmitter<{ agent_event: (event: AgentEvent) => void }>()

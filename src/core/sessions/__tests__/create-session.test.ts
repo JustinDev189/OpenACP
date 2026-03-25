@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Session } from "../session.js";
-import { EventBus } from "../event-bus.js";
-import type { AgentInstance } from "../agents/agent-instance.js";
-import type { IChannelAdapter } from "../channel.js";
-import { TypedEmitter } from "../typed-emitter.js";
-import type { AgentEvent } from "../types.js";
+import { EventBus } from "../../event-bus.js";
+import type { AgentInstance } from "../../agents/agent-instance.js";
+import type { IChannelAdapter } from "../../channel.js";
+import { TypedEmitter } from "../../typed-emitter.js";
+import type { AgentEvent } from "../../types.js";
 
 function createMockAgentInstance(sessionId = "agent-session-1"): AgentInstance {
   const emitter = new TypedEmitter<{ agent_event: (event: AgentEvent) => void }>();
@@ -36,7 +36,7 @@ function createMockAdapter(): IChannelAdapter {
 }
 
 // Test createSession by constructing a minimal OpenACPCore with mocked dependencies
-import { OpenACPCore } from "../core.js";
+import { OpenACPCore } from "../../core.js";
 import { SessionFactory } from "../session-factory.js";
 
 function createMockCore(): OpenACPCore {

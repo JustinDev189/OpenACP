@@ -1,15 +1,15 @@
 import { nanoid } from "nanoid";
-import type { AgentManager } from "./agents/agent-manager.js";
+import type { AgentManager } from "../agents/agent-manager.js";
 import type { SessionManager } from "./session-manager.js";
-import type { SpeechService } from "./speech/index.js";
-import type { EventBus } from "./event-bus.js";
+import type { SpeechService } from "../speech/index.js";
+import type { EventBus } from "../event-bus.js";
 import type { UsageStore } from "./usage-store.js";
 import type { UsageBudget } from "./usage-budget.js";
-import type { NotificationManager } from "./notification.js";
-import type { TunnelService } from "../tunnel/tunnel-service.js";
-import type { AgentEvent, UsageRecord } from "./types.js";
+import type { NotificationManager } from "../notification.js";
+import type { TunnelService } from "../../tunnel/tunnel-service.js";
+import type { AgentEvent, UsageRecord } from "../types.js";
 import { Session } from "./session.js";
-import { createChildLogger } from "./log.js";
+import { createChildLogger } from "../log.js";
 
 const log = createChildLogger({ module: "session-factory" });
 

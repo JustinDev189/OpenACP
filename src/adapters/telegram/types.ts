@@ -1,4 +1,4 @@
-import type { Session } from "../../core/session.js";
+import type { Session } from "../../core/sessions/session.js";
 import type { ChannelConfig } from "../../core/channel.js";
 
 export interface TelegramChannelConfig extends ChannelConfig {

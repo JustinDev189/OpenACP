@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SessionManager } from '../session-manager.js'
 import { Session } from '../session.js'
 import type { SessionStore } from '../session-store.js'
-import type { SessionRecord } from '../types.js'
+import type { SessionRecord } from '../../types.js'
 
 function mockAgentInstance(sessionId = 'agent-sess-1') {
   return {

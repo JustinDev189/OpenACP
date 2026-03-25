@@ -1,7 +1,7 @@
 import type { Bot } from "grammy";
 import type { TelegramSendQueue } from "./send-queue.js";
 import type { AgentCommand } from "../../core/types.js";
-import type { SessionManager } from "../../core/session-manager.js";
+import type { SessionManager } from "../../core/sessions/session-manager.js";
 import type { TelegramPlatformData } from "../../core/types.js";
 import { buildSkillMessages } from "./commands/index.js";
 import { createChildLogger } from "../../core/log.js";

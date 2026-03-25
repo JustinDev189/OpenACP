@@ -4,7 +4,7 @@ import {
   ButtonStyle,
 } from 'discord.js'
 import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
-import type { Session } from '../../../core/session.js'
+import type { Session } from '../../../core/sessions/session.js'
 import { log } from '../../../core/log.js'
 import { deleteSessionThread } from '../forums.js'
 import type { DiscordAdapter } from '../adapter.js'

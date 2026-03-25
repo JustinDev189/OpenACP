@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Session } from '../session.js'
-import type { AgentEvent, PermissionRequest } from '../types.js'
-import type { AgentInstance } from '../agents/agent-instance.js'
+import type { AgentEvent, PermissionRequest } from '../../types.js'
+import type { AgentInstance } from '../../agents/agent-instance.js'
 
 /** Minimal mock AgentInstance for testing Session event wiring */
 function createMockAgentInstance(): AgentInstance {

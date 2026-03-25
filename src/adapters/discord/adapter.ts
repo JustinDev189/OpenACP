@@ -15,7 +15,7 @@ import type {
   PlanEntry,
 } from "../../core/types.js";
 import type { OpenACPCore } from "../../core/core.js";
-import type { Session } from "../../core/session.js";
+import type { Session } from "../../core/sessions/session.js";
 import { log } from "../../core/log.js";
 import type { DisplayVerbosity } from "../shared/format-types.js";
 import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";

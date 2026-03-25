@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { JsonFileSessionStore } from "../session-store.js";
-import type { SessionRecord } from "../types.js";
+import type { SessionRecord } from "../../types.js";
 
 function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
