@@ -13,6 +13,7 @@ import type { AdapterCapabilities } from "../../core/channel.js";
 import type { FileService } from "../../core/file-service.js";
 import { createChildLogger } from "../../core/log.js";
 import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";
+import type { DisplayVerbosity } from "../shared/format-types.js";
 import type { IRenderer } from "../shared/rendering/renderer.js";
 import { BaseRenderer } from "../shared/rendering/renderer.js";
 const log = createChildLogger({ module: "slack" });
@@ -351,6 +352,8 @@ export class SlackAdapter extends MessagingAdapter {
     if (buf) { buf.destroy(); this.textBuffers.delete(sessionId); }
   }
 
+  private _currentMeta!: SlackSessionMeta;
+
   private getTextBuffer(sessionId: string, channelId: string): SlackTextBuffer {
     let buf = this.textBuffers.get(sessionId);
     if (!buf) {
@@ -367,40 +370,113 @@ export class SlackAdapter extends MessagingAdapter {
       return;
     }
 
+    // Store meta for handler methods to use
+    this._currentMeta = meta;
+    await super.sendMessage(sessionId, content);
+  }
+
+  // --- Handler overrides (dispatched by base class) ---
+
+  protected async handleText(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const meta = this._currentMeta;
     // Text chunks are buffered and flushed as a single message after idle timeout
-    if (content.type === "text") {
-      const buf = this.getTextBuffer(sessionId, meta.channelId);
-      buf.append(content.text ?? "");
-      return;
-    }
+    const buf = this.getTextBuffer(sessionId, meta.channelId);
+    buf.append(content.text ?? "");
+  }
 
-    // For session_end / error: flush any pending text first, then send the event
-    if (content.type === "session_end" || content.type === "error") {
-      const buf = this.textBuffers.get(sessionId);
-      if (buf) {
-        try {
-          await buf.flush();
-        } catch (err) {
-          log.warn({ err, sessionId }, "Flush failed on session_end");
-        }
-        buf.destroy();
-        this.textBuffers.delete(sessionId);
+  protected async handleSessionEnd(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const meta = this._currentMeta;
+    // Flush any pending text first
+    await this.flushTextBuffer(sessionId);
+
+    const blocks = this.formatter.formatOutgoing(content);
+    if (blocks.length === 0) return;
+
+    try {
+      await this.queue.enqueue("chat.postMessage", {
+        channel: meta.channelId,
+        text: content.text ?? content.type,
+        blocks,
+      });
+    } catch (err) {
+      log.error({ err, sessionId, type: content.type }, "Failed to post Slack message");
+    }
+  }
+
+  protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const meta = this._currentMeta;
+    // Flush any pending text first
+    await this.flushTextBuffer(sessionId);
+
+    const blocks = this.formatter.formatOutgoing(content);
+    if (blocks.length === 0) return;
+
+    try {
+      await this.queue.enqueue("chat.postMessage", {
+        channel: meta.channelId,
+        text: content.text ?? content.type,
+        blocks,
+      });
+    } catch (err) {
+      log.error({ err, sessionId, type: content.type }, "Failed to post Slack message");
+    }
+  }
+
+  protected async handleAttachment(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const meta = this._currentMeta;
+    if (!content.attachment) return;
+    if (content.attachment.type === "audio") {
+      try {
+        await this.uploadAudioFile(meta.channelId, content.attachment);
+        const buf = this.textBuffers.get(sessionId);
+        if (buf) await buf.stripTtsBlock();
+      } catch (err) {
+        log.error({ err, sessionId }, "Failed to upload audio to Slack");
       }
     }
+  }
 
-    if (content.type === "attachment" && content.attachment) {
-      if (content.attachment.type === "audio") {
-        try {
-          await this.uploadAudioFile(meta.channelId, content.attachment);
-          const buf = this.textBuffers.get(sessionId);
-          if (buf) await buf.stripTtsBlock();
-        } catch (err) {
-          log.error({ err, sessionId }, "Failed to upload audio to Slack");
-        }
+  protected async handleThought(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  protected async handleToolCall(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  protected async handleToolUpdate(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  protected async handlePlan(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  protected async handleUsage(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  protected async handleSystem(sessionId: string, content: OutgoingMessage): Promise<void> {
+    await this.postFormattedMessage(sessionId, content);
+  }
+
+  // --- Private helpers ---
+
+  private async flushTextBuffer(sessionId: string): Promise<void> {
+    const buf = this.textBuffers.get(sessionId);
+    if (buf) {
+      try {
+        await buf.flush();
+      } catch (err) {
+        log.warn({ err, sessionId }, "Flush failed on session_end");
       }
-      return;
+      buf.destroy();
+      this.textBuffers.delete(sessionId);
     }
+  }
 
+  private async postFormattedMessage(sessionId: string, content: OutgoingMessage): Promise<void> {
+    const meta = this._currentMeta;
     const blocks = this.formatter.formatOutgoing(content);
     if (blocks.length === 0) return;
 
