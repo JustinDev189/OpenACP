@@ -1,1 +1,6 @@
 export * from './types.js'
+export * from './middleware-chain.js'
+export { ServiceRegistry } from './service-registry.js'
+export { PluginStorageImpl } from './plugin-storage.js'
+export { ErrorTracker } from './error-tracker.js'
+export type { ErrorBudgetConfig } from './error-tracker.js'

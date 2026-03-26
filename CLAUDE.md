@@ -67,6 +67,23 @@ Published as `@openacp/cli` on npm. Users install with `npm install -g @openacp/
 - GitHub Action auto-publishes on tag push (`v*`)
 - Plugin system: `openacp install @openacp/adapter-discord` installs to `~/.openacp/plugins/`
 
+## Versioning
+
+Format: `YYYY.MMDD.<patch>` — ví dụ `2026.0326.1` là bản thứ nhất trong ngày 26/03/2026.
+
+- `YYYY` — năm
+- `MMDD` — tháng + ngày (zero-padded)
+- `<patch>` — thứ tự phiên bản trong ngày đó, bắt đầu từ 1
+
+## Documentation Sync
+
+Khi thay đổi code, **phải cập nhật docs tương ứng** để code và documentation luôn đồng bộ:
+
+- **Thêm tính năng mới**: Bắt buộc cập nhật README và `docs/` (GitBook) để mô tả tính năng, cách dùng, config nếu có.
+- **Cập nhật tính năng**: Cập nhật lại phần docs liên quan để phản ánh thay đổi.
+- **Fix bug**: Nếu bug liên quan đến behavior đã document, cập nhật docs nếu cần. Không bắt buộc nếu docs vẫn chính xác.
+- **Nguyên tắc chung**: Không merge code mà docs chưa được cập nhật cho feature mới/thay đổi. README dành cho user, `docs/` dành cho cả user lẫn contributor.
+
 ## Conventions
 
 - ESM-only (`"type": "module"`), all imports use `.js` extension
