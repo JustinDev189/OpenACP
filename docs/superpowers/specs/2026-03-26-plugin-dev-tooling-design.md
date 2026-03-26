@@ -81,6 +81,17 @@ $ openacp dev ./my-plugin/
    → If import fails: log error, keep old plugin loaded
 ```
 
+### Prerequisite: Fix PluginContext.cleanup()
+
+Current `cleanup()` removes event listeners and middleware but does NOT unregister services from `ServiceRegistry` or commands from `CommandRegistry`. For hot-reload to work, `cleanup()` must:
+
+1. Track registered service names during plugin lifetime
+2. Call `serviceRegistry.unregister(name)` for each on cleanup
+3. Call `commandRegistry.unregisterByPlugin(pluginName)` on cleanup
+4. Add `ServiceRegistry.unregisterByPlugin(pluginName)` method
+
+This is a code fix required BEFORE dev mode implementation.
+
 ### Module Cache Clearing
 
 ESM modules are cached by Node.js. To reload:
@@ -93,12 +104,24 @@ const mod = await import(modulePath)
 const plugin = mod.default as OpenACPPlugin
 ```
 
+### ESM Cache-Busting Limitations
+
+The query-string approach (`?t=timestamp`) has known limitations:
+
+1. **Only entry file reloads** — plugin's `index.js` gets a new URL, but its internal imports (`./helper.js`) resolve to cached versions.
+2. **Memory leak** — each reload creates a new module entry never garbage collected. Acceptable for dev sessions.
+3. **Dependency changes require full restart** — new imports in helper files not picked up by hot-reload.
+
+**Mitigation:** Recommend plugin authors keep `index.ts` as the main logic file. For complex plugins with many files, use `--no-watch` + manual restart.
+
+**Future improvement:** Worker thread per dev plugin reload (clean module cache per worker, all files refreshed).
+
 ### Dev Plugin Isolation
 
 - Dev plugin has same PluginContext as any other plugin — no special permissions
 - If dev plugin crashes, only it is affected (error isolation via try/catch)
 - Dev plugin's services are unregistered on reload — consumers get fresh instances
-- Active sessions that reference old services may need to be notified (acceptable for dev)
+- Active sessions that reference old services may get disrupted — acceptable for dev mode
 
 ### Implementation Location
 
@@ -154,7 +177,7 @@ One template with all hooks included and commented. Developer removes what they 
 #### `src/index.ts`
 
 ```typescript
-import type { OpenACPPlugin, InstallContext, MigrateContext } from '@openacp/cli'
+import type { OpenACPPlugin, InstallContext, MigrateContext } from '@openacp/plugin-sdk'
 import { z } from 'zod'
 
 // ─── Settings Schema ───
@@ -402,7 +425,6 @@ describe('{{pluginName}}', () => {
   },
   "devDependencies": {
     "@openacp/plugin-sdk": "2026.0326.0",
-    "@openacp/cli": "2026.0326.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
     "zod": "^3.24.0"
@@ -742,6 +764,10 @@ packages:
 ```
 
 Published together: when CLI publishes new version, SDK publishes same version.
+
+**Note:** Root `package.json` has `"name": "openacp"` (private), but publishes as `@openacp/cli`. For `workspace:*` resolution, the SDK should reference the root package by its actual name: `"openacp": "workspace:*"` as devDependency. The publish script handles the name mapping to `@openacp/cli`.
+
+**CI/CD update needed:** GitHub Actions workflow must be updated to build SDK package and publish both `@openacp/cli` and `@openacp/plugin-sdk` on tag push.
 
 ---
 
