@@ -4,15 +4,15 @@ import { ConfigManager } from "./config/config.js";
 import { AgentManager } from "./agents/agent-manager.js";
 import { SessionManager } from "./sessions/session-manager.js";
 import { SessionBridge } from "./sessions/session-bridge.js";
-import { NotificationManager } from "./notification.js";
+import type { NotificationManager } from "./notification.js";
 import type { IChannelAdapter } from "./channel.js";
 import { Session } from "./sessions/session.js";
 import { MessageTransformer } from "./message-transformer.js";
-import { FileService } from "./utils/file-service.js";
+import type { FileService } from "./utils/file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
-import { UsageStore } from "./sessions/usage-store.js";
-import { UsageBudget } from "./sessions/usage-budget.js";
-import { SecurityGuard } from "./security-guard.js";
+import type { UsageStore } from "./sessions/usage-store.js";
+import type { UsageBudget } from "./sessions/usage-budget.js";
+import type { SecurityGuard } from "./security-guard.js";
 import { SessionFactory } from "./sessions/session-factory.js";
 import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
@@ -24,9 +24,8 @@ import { ServiceRegistry } from "./plugin/service-registry.js";
 import { MiddlewareChain } from "./plugin/middleware-chain.js";
 import { ErrorTracker } from "./plugin/error-tracker.js";
 import { createChildLogger } from "./utils/log.js";
-import { SpeechService, GroqSTT, EdgeTTS } from "../speech/index.js";
-import { ContextManager } from "./context/context-manager.js";
-import { EntireProvider } from "./context/entire/entire-provider.js";
+import type { SpeechService } from "../speech/index.js";
+import type { ContextManager } from "./context/context-manager.js";
 import type { ContextQuery, ContextOptions, ContextResult } from "./context/context-provider.js";
 const log = createChildLogger({ module: "core" });
 
@@ -35,11 +34,7 @@ export class OpenACPCore {
   agentCatalog: AgentCatalog;
   agentManager: AgentManager;
   sessionManager: SessionManager;
-  notificationManager: NotificationManager;
   messageTransformer: MessageTransformer;
-  fileService: FileService;
-  readonly speechService: SpeechService;
-  securityGuard: SecurityGuard;
   adapters: Map<string, IChannelAdapter> = new Map();
   /** Set by main.ts — triggers graceful shutdown with restart exit code */
   requestRestart: (() => Promise<void>) | null = null;
@@ -48,10 +43,39 @@ export class OpenACPCore {
   private resumeLocks: Map<string, Promise<Session | null>> = new Map();
   eventBus: EventBus;
   sessionFactory: SessionFactory;
-  readonly usageStore: UsageStore | null = null;
-  readonly usageBudget: UsageBudget | null = null;
-  readonly contextManager: ContextManager;
   readonly lifecycleManager: LifecycleManager;
+
+  // --- Lazy getters: resolve from ServiceRegistry (populated by plugins during boot) ---
+
+  get securityGuard(): SecurityGuard {
+    return this.lifecycleManager.serviceRegistry.get<SecurityGuard>('security')!;
+  }
+
+  get notificationManager(): NotificationManager {
+    return this.lifecycleManager.serviceRegistry.get<NotificationManager>('notifications')!;
+  }
+
+  get fileService(): FileService {
+    return this.lifecycleManager.serviceRegistry.get<FileService>('file-service')!;
+  }
+
+  get speechService(): SpeechService {
+    return this.lifecycleManager.serviceRegistry.get<SpeechService>('speech')!;
+  }
+
+  get contextManager(): ContextManager {
+    return this.lifecycleManager.serviceRegistry.get<ContextManager>('context')!;
+  }
+
+  get usageStore(): UsageStore | null {
+    const usage = this.lifecycleManager.serviceRegistry.get<{ store: UsageStore; budget: UsageBudget }>('usage');
+    return usage?.store ?? null;
+  }
+
+  get usageBudget(): UsageBudget | null {
+    const usage = this.lifecycleManager.serviceRegistry.get<{ store: UsageStore; budget: UsageBudget }>('usage');
+    return usage?.budget ?? null;
+  }
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -65,57 +89,16 @@ export class OpenACPCore {
       config.sessionStore.ttlDays,
     );
     this.sessionManager = new SessionManager(this.sessionStore);
-    this.securityGuard = new SecurityGuard(configManager, this.sessionManager);
-    this.notificationManager = new NotificationManager(this.adapters);
-
-    // Usage tracking
-    const usageConfig = config.usage;
-    if (usageConfig.enabled) {
-      const usagePath = path.join(os.homedir(), ".openacp", "usage.json");
-      this.usageStore = new UsageStore(usagePath, usageConfig.retentionDays);
-      this.usageBudget = new UsageBudget(this.usageStore, usageConfig);
-    }
 
     this.messageTransformer = new MessageTransformer();
     this.eventBus = new EventBus();
     this.sessionManager.setEventBus(this.eventBus);
-    this.contextManager = new ContextManager();
-    this.contextManager.register(new EntireProvider());
-    this.fileService = new FileService(
-      path.join(os.homedir(), ".openacp", "files"),
-    );
 
-    // Initialize speech service — edge-tts is always available by default (free, no API key)
-    const speechConfig = config.speech ?? {
-      stt: { provider: null, providers: {} },
-      tts: { provider: "edge-tts", providers: {} },
-    };
-    // Default TTS provider to edge-tts if not explicitly set
-    if (speechConfig.tts.provider == null) {
-      speechConfig.tts.provider = "edge-tts";
-    }
-    this.speechService = new SpeechService(speechConfig);
-
-    // Register built-in STT providers
-    const groqConfig = speechConfig.stt?.providers?.groq;
-    if (groqConfig?.apiKey) {
-      this.speechService.registerSTTProvider(
-        "groq",
-        new GroqSTT(groqConfig.apiKey, groqConfig.model),
-      );
-    }
-
-    // Register built-in TTS providers — always register edge-tts (free, no config needed)
-    {
-      const edgeConfig = speechConfig.tts?.providers?.["edge-tts"];
-      const voice = edgeConfig?.voice as string | undefined;
-      this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
-    }
-
+    // SessionFactory uses a lazy accessor for speechService (resolved from ServiceRegistry after plugin boot)
     this.sessionFactory = new SessionFactory(
       this.agentManager,
       this.sessionManager,
-      this.speechService,
+      () => this.speechService,
       this.eventBus,
     );
 
@@ -131,16 +114,6 @@ export class OpenACPCore {
       storagePath: path.join(os.homedir(), ".openacp", "plugins", "data"),
     });
 
-    // Auto-register built-in services
-    this.lifecycleManager.serviceRegistry.register("security", this.securityGuard, "@openacp/security");
-    this.lifecycleManager.serviceRegistry.register("file-service", this.fileService, "@openacp/file-service");
-    this.lifecycleManager.serviceRegistry.register("notifications", this.notificationManager, "@openacp/notifications");
-    if (this.usageStore && this.usageBudget) {
-      this.lifecycleManager.serviceRegistry.register("usage", { store: this.usageStore, budget: this.usageBudget }, "@openacp/usage");
-    }
-    this.lifecycleManager.serviceRegistry.register("context", this.contextManager, "@openacp/context");
-    this.lifecycleManager.serviceRegistry.register("speech", this.speechService, "@openacp/speech");
-
     // Wire middleware chain to session factory and session manager
     this.sessionFactory.middlewareChain = this.lifecycleManager.middlewareChain;
     this.sessionManager.middlewareChain = this.lifecycleManager.middlewareChain;
@@ -155,26 +128,30 @@ export class OpenACPCore {
           log.info({ level: value }, "Log level changed at runtime");
         }
         if (configPath.startsWith("speech.")) {
-          const newConfig = this.configManager.get();
-          const newSpeechConfig = newConfig.speech ?? {
-            stt: { provider: null, providers: {} },
-            tts: { provider: null, providers: {} },
-          };
-          this.speechService.updateConfig(newSpeechConfig);
-          const groqCfg = newSpeechConfig.stt?.providers?.groq;
-          if (groqCfg?.apiKey) {
-            this.speechService.registerSTTProvider(
-              "groq",
-              new GroqSTT(groqCfg.apiKey, groqCfg.model),
-            );
+          const speechSvc = this.speechService;
+          if (speechSvc) {
+            const { GroqSTT, EdgeTTS } = await import("../speech/index.js");
+            const newConfig = this.configManager.get();
+            const newSpeechConfig = newConfig.speech ?? {
+              stt: { provider: null, providers: {} },
+              tts: { provider: null, providers: {} },
+            };
+            speechSvc.updateConfig(newSpeechConfig);
+            const groqCfg = newSpeechConfig.stt?.providers?.groq;
+            if (groqCfg?.apiKey) {
+              speechSvc.registerSTTProvider(
+                "groq",
+                new GroqSTT(groqCfg.apiKey, groqCfg.model),
+              );
+            }
+            // Re-register TTS providers on config change — always keep edge-tts available
+            {
+              const edgeConfig = newSpeechConfig.tts?.providers?.["edge-tts"];
+              const voice = edgeConfig?.voice as string | undefined;
+              speechSvc.registerTTSProvider("edge-tts", new EdgeTTS(voice));
+            }
+            log.info("Speech service config updated at runtime");
           }
-          // Re-register TTS providers on config change — always keep edge-tts available
-          {
-            const edgeConfig = newSpeechConfig.tts?.providers?.["edge-tts"];
-            const voice = edgeConfig?.voice as string | undefined;
-            this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
-          }
-          log.info("Speech service config updated at runtime");
         }
       },
     );

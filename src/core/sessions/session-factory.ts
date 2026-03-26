@@ -36,9 +36,15 @@ export class SessionFactory {
   constructor(
     private agentManager: AgentManager,
     private sessionManager: SessionManager,
-    private speechService: SpeechService,
+    private speechServiceAccessor: SpeechService | (() => SpeechService),
     private eventBus: EventBus,
   ) {}
+
+  private get speechService(): SpeechService {
+    return typeof this.speechServiceAccessor === 'function'
+      ? this.speechServiceAccessor()
+      : this.speechServiceAccessor;
+  }
 
   async create(params: SessionCreateParams): Promise<Session> {
     // Hook: session:beforeCreate — modifiable, can block

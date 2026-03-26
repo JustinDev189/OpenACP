@@ -38,12 +38,31 @@ function createMockAdapter(): IChannelAdapter {
 // Test createSession by constructing a minimal OpenACPCore with mocked dependencies
 import { OpenACPCore } from "../../core.js";
 import { SessionFactory } from "../session-factory.js";
+import { ServiceRegistry } from "../../plugin/service-registry.js";
+import { MiddlewareChain } from "../../plugin/middleware-chain.js";
+import { LifecycleManager } from "../../plugin/lifecycle-manager.js";
 
 function createMockCore(): OpenACPCore {
   const mockAgent = createMockAgentInstance();
 
   // Create core with a minimal mock ConfigManager
   const core = Object.create(OpenACPCore.prototype) as OpenACPCore;
+
+  // Set up ServiceRegistry so lazy getters work
+  const serviceRegistry = new ServiceRegistry();
+  (core as any).lifecycleManager = new LifecycleManager({
+    serviceRegistry,
+    middlewareChain: new MiddlewareChain(),
+  });
+
+  // Register mock services in ServiceRegistry (lazy getters resolve from here)
+  serviceRegistry.register("notifications", {
+    notify: vi.fn().mockResolvedValue(undefined),
+    notifyAll: vi.fn().mockResolvedValue(undefined),
+  }, "@openacp/notifications");
+  serviceRegistry.register("file-service", {
+    downloadFile: vi.fn().mockResolvedValue(undefined),
+  }, "@openacp/file-service");
 
   // Set up minimal internal state
   core.adapters = new Map();
@@ -63,10 +82,6 @@ function createMockCore(): OpenACPCore {
   } as any;
   core.messageTransformer = {
     transform: vi.fn().mockReturnValue({ type: "text", text: "transformed" }),
-  } as any;
-  core.notificationManager = {
-    notify: vi.fn().mockResolvedValue(undefined),
-    notifyAll: vi.fn().mockResolvedValue(undefined),
   } as any;
   core.eventBus = new EventBus();
   core.sessionFactory = new SessionFactory(
@@ -167,7 +182,10 @@ describe("OpenACPCore.createSession", () => {
     const textEvent = { type: "text" as const, content: "hello" };
     session.agentInstance.emit('agent_event', textEvent);
 
-    expect(adapter.sendMessage).toHaveBeenCalled();
+    // sendMessage is called asynchronously via middleware chain
+    await vi.waitFor(() => {
+      expect(adapter.sendMessage).toHaveBeenCalled();
+    });
   });
 
   it("session starts in initializing status", async () => {

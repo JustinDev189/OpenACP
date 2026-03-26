@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { OpenACPCore } from "../core.js";
 import type { IChannelAdapter } from "../channel.js";
 import type { IncomingMessage } from "../types.js";
+import { SecurityGuard } from "../security-guard.js";
+import { NotificationManager } from "../notification.js";
 
 // Mock heavy dependencies
 vi.mock("../agent-catalog.js", () => {
@@ -116,12 +118,32 @@ function mockAdapter(): IChannelAdapter {
   } as unknown as IChannelAdapter;
 }
 
+/** Register mock core services in ServiceRegistry so lazy getters resolve. */
+function registerMockServices(core: OpenACPCore, configMgr?: any): void {
+  const sr = core.lifecycleManager.serviceRegistry;
+  // SecurityGuard needs configManager and sessionManager
+  if (!sr.has("security")) {
+    sr.register("security", new SecurityGuard(
+      configMgr ?? core.configManager,
+      core.sessionManager,
+    ), "@openacp/security");
+  }
+  if (!sr.has("notifications")) {
+    // Use real NotificationManager so it routes through adapters
+    sr.register("notifications", new NotificationManager(core.adapters), "@openacp/notifications");
+  }
+  if (!sr.has("file-service")) {
+    sr.register("file-service", {}, "@openacp/file-service");
+  }
+}
+
 describe("OpenACPCore", () => {
   let core: OpenACPCore;
   let adapter: IChannelAdapter;
 
   beforeEach(() => {
     core = new OpenACPCore(mockConfigManager());
+    registerMockServices(core);
     adapter = mockAdapter();
     core.registerAdapter("telegram", adapter);
   });
@@ -185,6 +207,7 @@ describe("OpenACPCore", () => {
         },
       });
       const secureCore = new OpenACPCore(config);
+      registerMockServices(secureCore, config);
       secureCore.registerAdapter("telegram", adapter);
 
       const msg: IncomingMessage = {
@@ -234,6 +257,7 @@ describe("OpenACPCore", () => {
         },
       });
       const secureCore = new OpenACPCore(config);
+      registerMockServices(secureCore, config);
       secureCore.registerAdapter("telegram", adapter);
 
       const msg: IncomingMessage = {

@@ -8,6 +8,7 @@ import { TelegramAdapter } from './adapters/telegram/index.js'
 import type { TelegramChannelConfig } from './adapters/telegram/index.js'
 import { ApiServer } from './core/api/api-server.js'
 import { TopicManager } from './core/topic-manager.js'
+import { corePlugins } from './plugins/core-plugins.js'
 
 export const RESTART_EXIT_CODE = 75
 let shuttingDown = false
@@ -137,9 +138,9 @@ export async function startServer() {
     // Emit kernel:booted before plugin boot
     core.eventBus.emit('kernel:booted')
 
-    // Discover community plugins from ~/.openacp/plugins/
-    // For now: empty array until CLI plugin add is implemented
-    await core.lifecycleManager.boot([])
+    // Boot core built-in plugins (security, file-service, context, usage, speech, notifications)
+    // plus any community plugins discovered from ~/.openacp/plugins/
+    await core.lifecycleManager.boot(corePlugins)
 
     // Collect registered commands and emit system:commands-ready
     const commands = core.lifecycleManager.serviceRegistry.get<import('./core/plugin/types.js').CommandDef[]>('registered-commands') ?? []
