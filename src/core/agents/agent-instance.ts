@@ -17,8 +17,18 @@ import type {
   AgentDefinition,
   AgentEvent,
   Attachment,
+  ConfigOption,
+  McpServerConfig,
   PermissionRequest,
+  SetConfigOptionValue,
 } from "../types.js";
+import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import type {
+  ListSessionsResponse,
+  LoadSessionResponse,
+  ForkSessionResponse,
+  SetSessionConfigOptionResponse,
+} from "@agentclientprotocol/sdk";
 import { createChildLogger } from "../utils/log.js";
 const log = createChildLogger({ module: "agent-instance" });
 
@@ -197,12 +207,20 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
     );
 
     const initResponse = await instance.connection.initialize({
-      protocolVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: {
         fs: { readTextFile: true, writeTextFile: true },
         terminal: true,
       },
     });
+
+    if (initResponse.protocolVersion !== PROTOCOL_VERSION) {
+      log.warn(
+        { expected: PROTOCOL_VERSION, got: initResponse.protocolVersion },
+        "ACP protocol version mismatch — some features may not work correctly",
+      );
+    }
+
     instance.promptCapabilities =
       initResponse.agentCapabilities?.promptCapabilities;
 
@@ -237,6 +255,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
   static async spawn(
     agentDef: AgentDefinition,
     workingDirectory: string,
+    mcpServers?: McpServerConfig[],
   ): Promise<AgentInstance> {
     log.debug(
       { agentName: agentDef.name, command: agentDef.command },
@@ -251,7 +270,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
     const response = await instance.connection.newSession({
       cwd: workingDirectory,
-      mcpServers: [],
+      mcpServers: (mcpServers ?? []) as any,
     });
     instance.sessionId = response.sessionId;
     instance.setupCrashDetection();
@@ -267,6 +286,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
     agentDef: AgentDefinition,
     workingDirectory: string,
     agentSessionId: string,
+    mcpServers?: McpServerConfig[],
   ): Promise<AgentInstance> {
     log.debug({ agentName: agentDef.name, agentSessionId }, "Resuming agent");
     const spawnStart = Date.now();
@@ -293,7 +313,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
       );
       const response = await instance.connection.newSession({
         cwd: workingDirectory,
-        mcpServers: [],
+        mcpServers: (mcpServers ?? []) as any,
       });
       instance.sessionId = response.sessionId;
       log.info(
@@ -345,6 +365,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               status: update.status ?? "pending",
               content: update.content ?? undefined,
               rawInput: (update as any).rawInput ?? undefined,
+              rawOutput: (update as any).rawOutput ?? undefined,
               meta: (update as any)._meta ?? undefined,
             };
             break;
@@ -357,6 +378,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               status: update.status ?? "pending",
               content: update.content ?? undefined,
               rawInput: (update as any).rawInput ?? undefined,
+              rawOutput: (update as any).rawOutput ?? undefined,
               meta: (update as any)._meta ?? undefined,
             };
             break;
@@ -375,6 +397,32 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
             event = {
               type: "commands_update",
               commands: update.availableCommands,
+            };
+            break;
+          case "session_info_update":
+            event = {
+              type: "session_info_update",
+              title: (update as any).title ?? undefined,
+              updatedAt: (update as any).updatedAt ?? undefined,
+              _meta: (update as any)._meta ?? undefined,
+            };
+            break;
+          case "current_mode_update":
+            event = {
+              type: "current_mode_update",
+              modeId: (update as any).currentModeId,
+            };
+            break;
+          case "config_option_update":
+            event = {
+              type: "config_option_update",
+              options: ((update as any).configOptions ?? []) as ConfigOption[],
+            };
+            break;
+          case "user_message_chunk":
+            event = {
+              type: "user_message_chunk",
+              content: (update as any).content?.text ?? "",
             };
             break;
           default:
@@ -521,6 +569,74 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
       },
     };
   }
+
+  // ── New ACP methods ──────────────────────────────────────────────────
+
+  async setMode(modeId: string): Promise<void> {
+    await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
+  }
+
+  async setConfigOption(
+    configId: string,
+    value: SetConfigOptionValue,
+  ): Promise<SetSessionConfigOptionResponse> {
+    return await this.connection.setSessionConfigOption({
+      sessionId: this.sessionId,
+      configId,
+      ...value,
+    } as any);
+  }
+
+  async setModel(modelId: string): Promise<void> {
+    await this.connection.unstable_setSessionModel({
+      sessionId: this.sessionId,
+      modelId,
+    });
+  }
+
+  async listSessions(
+    cwd?: string,
+    cursor?: string,
+  ): Promise<ListSessionsResponse> {
+    return await this.connection.listSessions({
+      cwd: cwd ?? null,
+      cursor: cursor ?? null,
+    });
+  }
+
+  async loadSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers?: McpServerConfig[],
+  ): Promise<LoadSessionResponse> {
+    return await this.connection.loadSession({
+      sessionId,
+      cwd,
+      mcpServers: (mcpServers ?? []) as any,
+    });
+  }
+
+  async authenticate(methodId: string): Promise<void> {
+    await this.connection.authenticate({ methodId });
+  }
+
+  async forkSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers?: McpServerConfig[],
+  ): Promise<ForkSessionResponse> {
+    return await this.connection.unstable_forkSession({
+      sessionId,
+      cwd,
+      mcpServers: (mcpServers ?? []) as any,
+    });
+  }
+
+  async closeSession(sessionId: string): Promise<void> {
+    await this.connection.unstable_closeSession({ sessionId });
+  }
+
+  // ── Prompt & lifecycle ──────────────────────────────────────────────
 
   async prompt(text: string, attachments?: Attachment[]): Promise<PromptResponse> {
     const contentBlocks: Array<Record<string, unknown>> = [{ type: "text", text }];

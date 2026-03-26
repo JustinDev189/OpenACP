@@ -77,6 +77,7 @@ export type AgentEvent =
       content?: unknown;
       locations?: unknown;
       rawInput?: unknown;
+      rawOutput?: unknown;
       meta?: unknown;
     }
   | {
@@ -88,6 +89,7 @@ export type AgentEvent =
       content?: unknown;
       locations?: unknown;
       rawInput?: unknown;
+      rawOutput?: unknown;
       meta?: unknown;
     }
   | { type: "plan"; entries: PlanEntry[] }
