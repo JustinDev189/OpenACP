@@ -81,7 +81,7 @@ const publishPkg = {
   homepage: 'https://github.com/Open-ACP/OpenACP',
   author: {
     name: 'OpenACP',
-    url: 'https://x.com/Open_ACP',
+    url: 'https://x.com/openacp_ai',
   },
   license: 'AGPL-3.0',
   keywords: ['acp', 'ai', 'coding-agent', 'telegram', 'claude', 'codex', 'gemini', 'cursor', 'agent-client-protocol'],
