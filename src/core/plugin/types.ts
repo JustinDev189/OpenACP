@@ -475,11 +475,18 @@ export interface ContextService {
   registerProvider(provider: ContextProvider): void
 }
 
+export interface ViewerStoreInterface {
+  storeFile(sessionId: string, filePath: string, content: string, workingDirectory: string): string | null
+  storeDiff(sessionId: string, filePath: string, oldContent: string, newContent: string, workingDirectory: string): string | null
+}
+
 export interface TunnelServiceInterface {
-  getPublicUrl(): string | undefined
-  isConnected(): boolean
+  getPublicUrl(): string
   start(): Promise<string>
   stop(): Promise<void>
+  getStore(): ViewerStoreInterface
+  fileUrl(entryId: string): string
+  diffUrl(entryId: string): string
 }
 
 // Re-export types needed by plugin authors from types.ts
