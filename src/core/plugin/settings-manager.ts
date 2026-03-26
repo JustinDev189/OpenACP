@@ -11,6 +11,10 @@ export interface ValidationResult {
 export class SettingsManager {
   constructor(private basePath: string) {}
 
+  getBasePath(): string {
+    return this.basePath
+  }
+
   createAPI(pluginName: string): SettingsAPI {
     const settingsPath = this.getSettingsPath(pluginName)
     return new SettingsAPIImpl(settingsPath)

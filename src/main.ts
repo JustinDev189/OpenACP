@@ -9,9 +9,17 @@ import type { TelegramChannelConfig } from './adapters/telegram/index.js'
 import { ApiServer } from './core/api/api-server.js'
 import { TopicManager } from './core/topic-manager.js'
 import { corePlugins } from './plugins/core-plugins.js'
+import { SettingsManager } from './core/plugin/settings-manager.js'
+import { PluginRegistry } from './core/plugin/plugin-registry.js'
+import path from 'node:path'
+import os from 'node:os'
 
 export const RESTART_EXIT_CODE = 75
 let shuttingDown = false
+
+const OPENACP_DIR = path.join(os.homedir(), '.openacp')
+const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, 'plugins', 'data')
+const REGISTRY_PATH = path.join(OPENACP_DIR, 'plugins.json')
 
 export async function startServer() {
   // 0. If running as daemon child, check state and write PID file
@@ -37,13 +45,18 @@ export async function startServer() {
     writePidFile(pidPath, process.pid)
   }
 
+  // Create SettingsManager and PluginRegistry early (needed by wizard + boot)
+  const settingsManager = new SettingsManager(PLUGINS_DATA_DIR)
+  const pluginRegistry = new PluginRegistry(REGISTRY_PATH)
+  await pluginRegistry.load()
+
   // 1. Check config exists, run setup if not
   const configManager = new ConfigManager()
   const configExists = await configManager.exists()
 
   if (!configExists) {
     const { runSetup } = await import('./core/setup/index.js')
-    const shouldStart = await runSetup(configManager)
+    const shouldStart = await runSetup(configManager, { settingsManager, pluginRegistry })
     if (!shouldStart) process.exit(0)
   }
 
@@ -52,6 +65,11 @@ export async function startServer() {
   const config = configManager.get()
   initLogger(config.logging)
   log.debug({ configPath: configManager.getConfigPath() }, 'Config loaded')
+
+  // First boot: auto-register built-in plugins if registry is empty
+  if (pluginRegistry.list().size === 0) {
+    await autoRegisterBuiltinPlugins(settingsManager, pluginRegistry, configManager)
+  }
 
   // Show banner in foreground TTY mode (not daemon, not piped)
   const isForegroundTTY = !!(process.stdout.isTTY && !process.env.NO_COLOR && config.runMode !== 'daemon')
@@ -137,6 +155,12 @@ export async function startServer() {
   try {
     // Emit kernel:booted before plugin boot
     core.eventBus.emit('kernel:booted')
+
+    // Pass settingsManager and pluginRegistry to LifecycleManager
+    // (LifecycleManager already accepts these in its constructor opts,
+    //  but core creates it without them — patch them in before boot)
+    ;(core.lifecycleManager as any).settingsManager = settingsManager
+    ;(core.lifecycleManager as any).pluginRegistry = pluginRegistry
 
     // Boot core built-in plugins (security, file-service, context, usage, speech, notifications)
     // plus any community plugins discovered from ~/.openacp/plugins/
@@ -264,6 +288,114 @@ export async function startServer() {
     unmuteLogger()
   }
   log.debug({ agents: Object.keys(config.agents) }, 'OpenACP started')
+}
+
+/**
+ * Auto-register all built-in plugins when the registry is empty (first boot with new plugin system,
+ * or upgrade from legacy config). Also runs legacy config migration for each plugin.
+ */
+async function autoRegisterBuiltinPlugins(
+  settingsManager: SettingsManager,
+  pluginRegistry: PluginRegistry,
+  configManager: ConfigManager,
+): Promise<void> {
+  const allPlugins = [
+    { name: '@openacp/security', version: '1.0.0', description: 'User access control and session limits' },
+    { name: '@openacp/file-service', version: '1.0.0', description: 'File storage and management' },
+    { name: '@openacp/context', version: '1.0.0', description: 'Conversation context management' },
+    { name: '@openacp/usage', version: '1.0.0', description: 'Token usage tracking and budget enforcement' },
+    { name: '@openacp/speech', version: '1.0.0', description: 'Text-to-speech and speech-to-text' },
+    { name: '@openacp/notifications', version: '1.0.0', description: 'Cross-session notification routing' },
+    { name: '@openacp/tunnel', version: '1.0.0', description: 'Expose local services via tunnel' },
+    { name: '@openacp/api-server', version: '1.0.0', description: 'REST API + SSE streaming server' },
+    { name: '@openacp/telegram', version: '1.0.0', description: 'Telegram adapter with forum topics' },
+    { name: '@openacp/discord', version: '1.0.0', description: 'Discord adapter with forum threads' },
+    { name: '@openacp/slack', version: '1.0.0', description: 'Slack adapter with channels and threads' },
+  ]
+
+  // Try to read legacy config for migration
+  let legacyConfig: Record<string, unknown> | undefined
+  try {
+    const cfg = configManager.get()
+    if (cfg && typeof cfg === 'object') {
+      legacyConfig = cfg as unknown as Record<string, unknown>
+    }
+  } catch {
+    // No config loaded yet — skip migration
+  }
+
+  // Run legacy migration for each plugin silently
+  if (legacyConfig) {
+    const pluginModules = await Promise.allSettled([
+      import('./plugins/security/index.js'),
+      import('./plugins/file-service/index.js'),
+      import('./plugins/context/index.js'),
+      import('./plugins/usage/index.js'),
+      import('./plugins/speech/index.js'),
+      import('./plugins/notifications/index.js'),
+      import('./plugins/tunnel/index.js'),
+      import('./plugins/api-server/index.js'),
+      import('./plugins/telegram/index.js'),
+      import('./plugins/discord/index.js'),
+      import('./plugins/slack/index.js'),
+    ])
+
+    for (const result of pluginModules) {
+      if (result.status !== 'fulfilled') continue
+      const plugin = result.value.default
+      if (plugin?.install) {
+        try {
+          // Check if settings already exist
+          const existing = await settingsManager.loadSettings(plugin.name)
+          if (Object.keys(existing).length > 0) continue
+
+          // Create a silent install context for migration only
+          const { createInstallContext } = await import('./core/plugin/install-context.js')
+          const ctx = createInstallContext({
+            pluginName: plugin.name,
+            settingsManager,
+            basePath: PLUGINS_DATA_DIR,
+            legacyConfig,
+          })
+          // Override terminal to be silent
+          ctx.terminal = createSilentTerminal()
+          await plugin.install(ctx)
+        } catch {
+          // Silently skip — migration is best-effort
+        }
+      }
+    }
+  }
+
+  for (const p of allPlugins) {
+    pluginRegistry.register(p.name, {
+      version: p.version,
+      source: 'builtin',
+      enabled: true,
+      settingsPath: settingsManager.getSettingsPath(p.name),
+      description: p.description,
+    })
+  }
+  await pluginRegistry.save()
+  log.info('Built-in plugins registered in plugin registry')
+}
+
+/**
+ * Create a no-op terminal for silent migration (no user interaction).
+ */
+function createSilentTerminal(): import('./core/plugin/types.js').TerminalIO {
+  const noop = () => {}
+  return {
+    text: async () => '',
+    select: async () => '' as any,
+    confirm: async () => false,
+    password: async () => '',
+    multiselect: async () => [],
+    log: { info: noop, success: noop, warning: noop, error: noop, step: noop },
+    spinner: () => ({ start: noop, stop: noop, fail: noop }),
+    note: noop,
+    cancel: noop,
+  }
 }
 
 // Direct execution for dev (node dist/main.js)
