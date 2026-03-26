@@ -121,6 +121,62 @@ git commit -m "fix(plugin): cleanup() now unregisters services and commands from
 
 ---
 
+### Task 1b: Add unloadPlugin() to LifecycleManager
+
+**Files:**
+- Modify: `src/core/plugin/lifecycle-manager.ts`
+
+- [ ] **Step 1: Add unloadPlugin method**
+
+In `src/core/plugin/lifecycle-manager.ts`, add a public method:
+
+```typescript
+async unloadPlugin(name: string): Promise<void> {
+  if (!this._loaded.has(name)) return
+
+  // Find plugin in loadOrder
+  const plugin = this.loadOrder.find(p => p.name === name)
+
+  // Teardown
+  if (plugin?.teardown) {
+    try {
+      await withTimeout(plugin.teardown(), TEARDOWN_TIMEOUT_MS, `${name}.teardown()`)
+    } catch {
+      // Swallow teardown errors
+    }
+  }
+
+  // Cleanup context
+  const ctx = this.contexts.get(name)
+  if (ctx) {
+    ctx.cleanup()
+    this.contexts.delete(name)
+  }
+
+  // Remove from tracking
+  this._loaded.delete(name)
+  this._failed.delete(name)
+  this.loadOrder = this.loadOrder.filter(p => p.name !== name)
+
+  this.eventBus?.emit('plugin:unloaded', { name })
+}
+```
+
+- [ ] **Step 2: Verify build + existing tests**
+
+```bash
+pnpm build && pnpm test src/core/plugin/__tests__/lifecycle-manager.test.ts
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/core/plugin/lifecycle-manager.ts
+git commit -m "feat(plugin): add unloadPlugin() to LifecycleManager for dev mode reload"
+```
+
+---
+
 ### Task 2: Monorepo Setup
 
 **Files:**
@@ -221,6 +277,20 @@ git commit -m "chore: setup monorepo with pnpm workspace for @openacp/plugin-sdk
 
 **Files:**
 - Create: `packages/plugin-sdk/src/index.ts`
+- Modify: `src/core/index.ts` (add missing adapter primitive exports)
+
+- [ ] **Step 0: Add missing exports to main package**
+
+In `src/core/index.ts`, add exports for adapter primitives and missing types. These are currently NOT exported from the main package but the SDK needs them:
+
+```typescript
+// Add to src/core/index.ts:
+export { MessagingAdapter, StreamAdapter } from './adapter-primitives/index.js'
+export { BaseRenderer } from './adapter-primitives/index.js'
+export { SendQueue, DraftManager, ToolCallTracker, ActivityTracker } from './adapter-primitives/index.js'
+```
+
+Verify build: `pnpm build`
 
 - [ ] **Step 1: Create SDK index.ts with all re-exports**
 
@@ -261,9 +331,12 @@ export type {
 
 // ─── Adapter types ───
 export type {
+  IChannelAdapter,
   OutgoingMessage,
   PermissionRequest,
+  PermissionOption,
   NotificationMessage,
+  AgentCommand,
 } from 'openacp'
 
 // ─── Adapter base classes ───
@@ -516,19 +589,16 @@ export function createTestContext(opts: TestContextOpts): TestPluginContext {
 }
 ```
 
-- [ ] **Step 3: Create testing barrel export**
+- [ ] **Step 3: Create testing barrel export (partial — complete in Task 5)**
 
-Create `packages/plugin-sdk/src/testing.ts`:
+Create `packages/plugin-sdk/src/testing.ts` with only what's available now:
 
 ```typescript
 export { createTestContext } from './testing/test-context.js'
 export type { TestPluginContext, TestContextOpts } from './testing/test-context.js'
-export { createTestInstallContext } from './testing/test-install-context.js'
-export type { TestInstallContextOpts } from './testing/test-install-context.js'
-export { mockServices } from './testing/mock-services.js'
 ```
 
-Note: `test-install-context.ts` and `mock-services.ts` created in next tasks.
+Note: `createTestInstallContext` and `mockServices` exports added in Task 5 after those files are created.
 
 - [ ] **Step 4: Run tests**
 
@@ -1329,55 +1399,50 @@ export async function cmdDev(args: string[]): Promise<void> {
     }
   }
 
-  // Start OpenACP
+  // Start OpenACP with dev plugin option
   const { startServer } = await import('../../main.js')
 
-  // Inject dev plugin loader into the boot process
-  // Store in global for main.ts to pick up
-  ;(globalThis as any).__openacp_dev_plugin_path = resolvedPath
-  ;(globalThis as any).__openacp_dev_no_watch = noWatch
-  ;(globalThis as any).__openacp_dev_verbose = verbose
-
   try {
-    await startServer()
+    await startServer({ devPlugin: { path: resolvedPath, noWatch, verbose } })
   } finally {
     tscProcess?.kill()
   }
 }
 ```
 
+Note: `startServer()` must be updated to accept an optional `devPlugin` parameter. If `main.ts` doesn't export `startServer`, refactor it to do so. Check `src/main.ts` — it likely already exports `startServer()`.
+
+```
+
 - [ ] **Step 2: Wire into CLI routing**
 
-In `src/cli/commands/index.ts`, find where commands are routed. Add:
+Read `src/cli.ts` (or `src/cli/index.ts`) to find where CLI commands are routed (the main switch/if-else that dispatches 'start', 'plugins', etc.). Add a 'dev' case:
 
 ```typescript
 case 'dev': {
-  const { cmdDev } = await import('./dev.js')
+  const { cmdDev } = await import('./commands/dev.js')
   await cmdDev(args.slice(1))
   return
 }
 ```
+
+Note: The exact routing location may be in `src/cli.ts`, `src/cli/commands/index.ts`, or another router file. Read the file first to find the right place.
 
 - [ ] **Step 3: Add dev plugin loading to main.ts**
 
 In `src/main.ts`, after `lifecycle.boot(corePlugins)`, add:
 
 ```typescript
-// Load dev plugin if running in dev mode
-const devPluginPath = (globalThis as any).__openacp_dev_plugin_path
-if (devPluginPath) {
+// Load dev plugin if running in dev mode (passed via startServer options)
+if (opts?.devPlugin) {
   const { DevPluginLoader } = await import('./core/plugin/dev-loader.js')
-  const loader = new DevPluginLoader(devPluginPath)
+  const loader = new DevPluginLoader(opts.devPlugin.path)
 
   const loadDevPlugin = async () => {
     try {
       const plugin = await loader.load()
       // Unload previous version if exists
-      const prevCtx = lifecycle.contexts?.get?.(plugin.name)
-      if (prevCtx) {
-        await (plugin as any).teardown?.()
-        prevCtx.cleanup()
-      }
+      await lifecycle.unloadPlugin(plugin.name)
       // Boot the dev plugin
       await lifecycle.boot([plugin])
       log.info({ plugin: plugin.name }, 'Dev plugin loaded')
@@ -1388,13 +1453,13 @@ if (devPluginPath) {
 
   await loadDevPlugin()
 
-  // Watch for changes
-  if (!(globalThis as any).__openacp_dev_no_watch) {
-    const chokidar = await import('node:fs').then(m => m)
+  // Watch for changes using fs.watch
+  if (!opts.devPlugin.noWatch) {
+    const nodeFs = await import('node:fs')
     const distPath = loader.getDistPath()
 
     let debounceTimer: NodeJS.Timeout | undefined
-    fs.watch(distPath, { recursive: true }, () => {
+    nodeFs.watch(distPath, { recursive: true }, () => {
       clearTimeout(debounceTimer)
       debounceTimer = setTimeout(async () => {
         log.info('Dev plugin changed, reloading...')
