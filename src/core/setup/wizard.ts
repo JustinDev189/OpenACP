@@ -3,14 +3,11 @@ import type { Config, ConfigManager } from "../config/config.js";
 import type { OnboardSection } from "./types.js";
 import { ONBOARD_SECTION_OPTIONS } from "./types.js";
 import { guardCancel, ok, fail, printStartBanner, summarizeConfig } from "./helpers.js";
-import { setupTelegram } from "./setup-telegram.js";
-import { setupDiscord } from "./setup-discord.js";
 import { setupAgents } from "./setup-agents.js";
 import { setupWorkspace } from "./setup-workspace.js";
 import { setupRunMode } from "./setup-run-mode.js";
 import { setupIntegrations } from "./setup-integrations.js";
 import { configureChannels } from "./setup-channels.js";
-import type { DiscordChannelConfig } from "../../adapters/discord/types.js";
 import type { SettingsManager } from "../plugin/settings-manager.js";
 import type { PluginRegistry } from "../plugin/plugin-registry.js";
 
@@ -24,7 +21,6 @@ export async function runSetup(
   clack.intro("Let's set up OpenACP");
 
   const { settingsManager, pluginRegistry } = opts ?? {};
-  const usePluginInstall = !!(settingsManager && pluginRegistry);
 
   try {
     const channelChoice = guardCancel(
@@ -38,9 +34,6 @@ export async function runSetup(
       }),
     );
 
-    let telegram: Config["channels"][string] | undefined;
-    let discord: DiscordChannelConfig | undefined;
-
     // Calculate total steps dynamically: channel(s) + workspace + run mode
     const channelSteps = channelChoice === 'both' ? 2 : 1;
     const runModeSteps = opts?.skipRunMode ? 0 : 1;
@@ -50,7 +43,7 @@ export async function runSetup(
 
     if (channelChoice === 'telegram' || channelChoice === 'both') {
       currentStep++;
-      if (usePluginInstall) {
+      if (settingsManager && pluginRegistry) {
         // Delegate to Telegram plugin's install() via InstallContext
         const { createInstallContext } = await import('../plugin/install-context.js');
         const telegramPlugin = (await import('../../plugins/telegram/index.js')).default;
@@ -68,12 +61,14 @@ export async function runSetup(
           description: telegramPlugin.description,
         });
       } else {
-        telegram = await setupTelegram({ stepNum: currentStep, totalSteps });
+        // Plugin system not available — inform user
+        console.log(fail('Plugin system not initialized. Cannot set up Telegram.'));
+        return false;
       }
     }
     if (channelChoice === 'discord' || channelChoice === 'both') {
       currentStep++;
-      if (usePluginInstall) {
+      if (settingsManager && pluginRegistry) {
         // Delegate to Discord plugin's install() via InstallContext
         const { createInstallContext } = await import('../plugin/install-context.js');
         const discordPlugin = (await import('../../plugins/discord/index.js')).default;
@@ -91,7 +86,9 @@ export async function runSetup(
           description: discordPlugin.description,
         });
       } else {
-        discord = await setupDiscord();
+        // Plugin system not available — inform user
+        console.log(fail('Plugin system not initialized. Cannot set up Discord.'));
+        return false;
       }
     }
 
@@ -118,13 +115,8 @@ export async function runSetup(
       sessionTimeoutMinutes: 60,
     };
 
-    const channels: Config["channels"] = {};
-    if (telegram) channels.telegram = telegram;
-    // DiscordChannelConfig is structurally compatible with the base channel schema
-    if (discord) channels.discord = discord as Config["channels"][string];
-
     const config: Config = {
-      channels,
+      channels: {},
       agents: {},
       defaultAgent,
       workspace,
@@ -175,7 +167,7 @@ export async function runSetup(
     }
 
     // Auto-register remaining built-in plugins in the registry
-    if (usePluginInstall) {
+    if (settingsManager && pluginRegistry) {
       await registerBuiltinPlugins(settingsManager, pluginRegistry);
       await pluginRegistry.save();
     }
