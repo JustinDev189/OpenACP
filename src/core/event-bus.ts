@@ -19,6 +19,36 @@ export interface EventBusEvents {
     sessionId: string;
     permission: PermissionRequest;
   }) => void;
+  "permission:resolved": (data: {
+    sessionId: string;
+    requestId: string;
+    decision: string;
+  }) => void;
+
+  // System lifecycle
+  "kernel:booted": () => void;
+  "system:ready": () => void;
+  "system:shutdown": () => void;
+  "system:commands-ready": (data: {
+    commands: Array<{ name: string; description: string }>;
+  }) => void;
+
+  // Plugin lifecycle
+  "plugin:loaded": (data: { name: string; version: string }) => void;
+  "plugin:failed": (data: { name: string; error: string }) => void;
+  "plugin:disabled": (data: { name: string; reason: string }) => void;
+  "plugin:unloaded": (data: { name: string }) => void;
+
+  // Session (additional)
+  "session:ended": (data: { sessionId: string; reason: string }) => void;
+  "session:named": (data: { sessionId: string; name: string }) => void;
+
+  // Agent (additional)
+  "agent:prompt": (data: {
+    sessionId: string;
+    text: string;
+    attachments?: unknown[];
+  }) => void;
 }
 
 export class EventBus extends TypedEmitter<EventBusEvents> {}
