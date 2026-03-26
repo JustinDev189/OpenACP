@@ -10,8 +10,9 @@
 |----------|----------|
 | Plugin ownership | Plugin owns everything — core has zero usage knowledge |
 | Storage | Plugin manages own storage via `ctx.storage` API, no legacy `usage.json` |
-| Event source | Core emits `usage:recorded` on event bus; plugin listens |
-| Notifications | Plugin emits `notification:send` event; notifications plugin delivers |
+| Event source | Core emits `usage:recorded` on event bus (added to `EventBusEvents`); plugin listens |
+| Notifications | Plugin calls `ctx.getService('notifications').notifyAll()` directly |
+| Plugin name | `@openacp/usage-plugin` |
 
 ## Architecture
 
@@ -20,47 +21,69 @@ Core (SessionFactory)            Event Bus               Usage Plugin
 ─────────────────────           ─────────               ────────────
 agent_event (type=usage) ──→  emit('usage:recorded')  ──→ on('usage:recorded')
                                                            │
-                                                           ├─ store via ctx.storage
-                                                           ├─ check budget
+                                                           ├─ buffer in memory
+                                                           ├─ debounced flush to ctx.storage
+                                                           ├─ async budget check
                                                            │
-                                                           └─ emit('notification:send') ──→ Notifications Plugin
+                                                           └─ getService('notifications').notifyAll(...)
 ```
 
 ## Plugin Permissions
 
 ```typescript
-permissions: ['events:read', 'events:emit', 'services:register', 'commands:register', 'storage:read', 'storage:write']
+permissions: ['events:read', 'services:register', 'services:use', 'commands:register', 'storage:read', 'storage:write']
 ```
 
-No `kernel:access` required.
+No `kernel:access` required. No `events:emit` needed (uses service call for notifications).
 
 ## Core Changes
 
-### 1. SessionFactory — Emit `usage:recorded` event
+### 1. Add `usage:recorded` to `EventBusEvents`
+
+In `src/core/event-bus.ts`, add to the `EventBusEvents` interface:
+
+```typescript
+'usage:recorded': (record: UsageRecordEvent) => void;
+```
+
+Where `UsageRecordEvent`:
+```typescript
+interface UsageRecordEvent {
+  sessionId: string
+  agentName: string
+  timestamp: string           // ISO 8601
+  tokensUsed: number          // from ACP usage_update.used
+  contextSize: number         // from ACP usage_update.size
+  cost?: { amount: number; currency: string }  // from ACP usage_update.cost
+}
+```
+
+### 2. SessionFactory — Emit `usage:recorded` event
 
 In `SessionFactory.wireSideEffects()`, replace the direct `usageStore.append()` + `usageBudget.check()` block with:
 
 ```typescript
 session.on("agent_event", (event: AgentEvent) => {
   if (event.type !== "usage") return;
-  const record: UsageRecord = {
+  this.eventBus.emit("usage:recorded", {
     sessionId: session.id,
+    agentName: session.agentName,
     timestamp: new Date().toISOString(),
-    tokensUsed: event.tokens ?? 0,
-    cost: event.cost ? { amount: event.cost, currency: "USD" } : undefined,
-  };
-  this.eventBus.emit("usage:recorded", record);
+    tokensUsed: event.tokensUsed ?? 0,
+    contextSize: event.contextSize ?? 0,
+    cost: event.cost,
+  });
 });
 ```
 
-### 2. Remove from OpenACPCore
+### 3. Remove from OpenACPCore
 
 - Delete `usageStore` lazy getter
 - Delete `usageBudget` lazy getter
 - Remove usage-related imports
 - Remove usage from `wireSideEffects` dependency parameter type
 
-### 3. Remove `src/plugins/usage/`
+### 4. Remove `src/plugins/usage/`
 
 Delete entirely:
 - `src/plugins/usage/index.ts`
@@ -68,9 +91,24 @@ Delete entirely:
 - `src/plugins/usage/usage-budget.ts`
 - `src/plugins/usage/__tests__/`
 
-### 4. Remove from `core-plugins.ts`
+### 5. Remove from `core-plugins.ts`
 
 Remove `usagePlugin` from the core plugins array.
+
+### 6. Remove usage query from Telegram commands
+
+In `src/plugins/telegram/commands/session.ts`:
+- Remove `handleUsage()` function (the plugin's `/usage` command replaces it)
+- Remove `formatUsageReport()` from `formatting.ts` if no longer used
+- Remove related tests (`usage-store.test.ts`, `usage-formatting.test.ts`)
+
+### 7. Clean up types
+
+- Remove `UsageSummary` interface from `types.ts` (no longer needed)
+- Remove `UsageService.getSummary()` from plugin types (simplify to just `trackUsage` + `checkBudget`)
+- Keep `UsageRecord` type in core for the event contract
+- Remove `UsageStore` and `UsageBudget` from public exports in `src/core/index.ts`
+- Update mock service in `packages/plugin-sdk/src/testing/mock-services.ts`
 
 ## Plugin Structure
 
@@ -81,8 +119,8 @@ built-in-plugins/usage-plugin/
 ├── README.md
 ├── src/
 │   ├── index.ts            — Plugin entry
-│   ├── usage-store.ts      — Storage via ctx.storage, month-partitioned
-│   ├── usage-budget.ts     — Budget checking + status
+│   ├── usage-store.ts      — In-memory cache + debounced ctx.storage flush
+│   ├── usage-budget.ts     — Async budget checking + status
 │   └── __tests__/
 │       ├── index.test.ts
 │       ├── usage-store.test.ts
@@ -95,29 +133,40 @@ built-in-plugins/usage-plugin/
 
 ```typescript
 const plugin: OpenACPPlugin = {
-  name: '@openacp/usage',
+  name: '@openacp/usage-plugin',
   version: '1.0.0',
   description: 'Token usage tracking and budget enforcement',
-  permissions: ['events:read', 'events:emit', 'services:register', 'commands:register', 'storage:read', 'storage:write'],
+  permissions: ['events:read', 'services:use', 'services:register', 'commands:register', 'storage:read', 'storage:write'],
 
   async setup(ctx: PluginContext) {
     const store = new UsageStore(ctx.storage)
     const config = ctx.pluginConfig as UsagePluginConfig
     const budget = new UsageBudget(store, config)
 
+    // Load existing records into memory cache
+    await store.loadFromStorage()
+
     // Clean old records on startup
     await store.cleanupExpired(config.retentionDays ?? 90)
 
     // Listen to usage events from core
-    ctx.on('usage:recorded', async (record: UsageRecord) => {
-      await store.append(record)
+    ctx.on('usage:recorded', async (record: UsageRecordEvent) => {
+      const usageRecord: UsageRecord = {
+        id: nanoid(),
+        ...record,
+      }
+      await store.append(usageRecord)
 
-      const result = budget.check()
+      const result = await budget.check()
       if (result.message) {
-        ctx.emit('notification:send', {
-          message: result.message,
-          level: result.status,  // 'warning' | 'exceeded'
-        })
+        const notifications = ctx.getService<NotificationManager>('notifications')
+        if (notifications) {
+          await notifications.notifyAll({
+            sessionId: record.sessionId,
+            type: 'budget_warning',
+            summary: result.message,
+          })
+        }
       }
     })
 
@@ -144,8 +193,10 @@ const plugin: OpenACPPlugin = {
     ctx.log.info('Usage tracking ready')
   },
 
-  async teardown() {
-    // Cleanup handled by store
+  async teardown(ctx: PluginContext) {
+    // Flush any pending writes
+    const usage = ctx.getService<{ store: UsageStore }>('usage')
+    if (usage) await usage.store.flush()
   },
 
   async install(ctx: InstallContext) {
@@ -197,36 +248,68 @@ const plugin: OpenACPPlugin = {
   async uninstall(ctx: InstallContext, opts: { purge: boolean }) {
     if (opts.purge) {
       await ctx.settings.clear()
-      // Storage is automatically cleaned up with plugin removal
     }
     ctx.terminal.log.success('Usage plugin removed')
   },
 }
 ```
 
-### `usage-store.ts` — Storage Layer
+### `usage-store.ts` — Storage Layer (with in-memory cache + debounce)
 
-Uses `ctx.storage` with month-partitioned keys:
+Uses `ctx.storage` with month-partitioned keys. Maintains an in-memory cache for fast reads and debounces writes to avoid excessive I/O.
 
 ```typescript
+const DEBOUNCE_MS = 2000
+
 export class UsageStore {
+  private cache = new Map<string, UsageRecord[]>()
+  private dirty = new Set<string>()
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+
   constructor(private storage: PluginStorage) {}
 
-  async append(record: UsageRecord): Promise<void> {
-    const key = this.monthKey(record.timestamp)
-    const records = await this.getMonth(key)
-    records.push(record)
-    await this.storage.set(key, records)
+  /** Load current month's records into memory on startup */
+  async loadFromStorage(): Promise<void> {
+    const key = this.monthKey(new Date().toISOString())
+    const records = (await this.storage.get(key)) as UsageRecord[] ?? []
+    this.cache.set(key, records)
   }
 
-  async getMonthlyTotal(date?: Date): Promise<{ totalCost: number; currency: string }> {
+  /** Append a record (in-memory, schedules debounced flush) */
+  async append(record: UsageRecord): Promise<void> {
+    const key = this.monthKey(record.timestamp)
+    if (!this.cache.has(key)) {
+      const existing = (await this.storage.get(key)) as UsageRecord[] ?? []
+      this.cache.set(key, existing)
+    }
+    this.cache.get(key)!.push(record)
+    this.dirty.add(key)
+    this.scheduleFlush()
+  }
+
+  /** Get monthly cost total (reads from cache) */
+  getMonthlyTotal(date?: Date): { totalCost: number; currency: string } {
     const key = this.monthKey((date ?? new Date()).toISOString())
-    const records = await this.getMonth(key)
+    const records = this.cache.get(key) ?? []
     const totalCost = records.reduce((sum, r) => sum + (r.cost?.amount ?? 0), 0)
     const currency = records.find(r => r.cost?.currency)?.cost?.currency ?? 'USD'
     return { totalCost, currency }
   }
 
+  /** Flush all dirty keys to storage immediately */
+  async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    for (const key of this.dirty) {
+      const records = this.cache.get(key)
+      if (records) await this.storage.set(key, records)
+    }
+    this.dirty.clear()
+  }
+
+  /** Delete records older than retention period */
   async cleanupExpired(retentionDays: number): Promise<void> {
     const keys = await this.storage.list()
     const cutoff = new Date()
@@ -236,24 +319,26 @@ export class UsageStore {
     for (const key of keys) {
       if (key.startsWith('records:') && key < cutoffKey) {
         await this.storage.delete(key)
+        this.cache.delete(key)
       }
     }
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer) return
+    this.flushTimer = setTimeout(() => {
+      this.flush()
+    }, DEBOUNCE_MS)
   }
 
   private monthKey(timestamp: string): string {
     const d = new Date(timestamp)
     return `records:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
   }
-
-  private async getMonth(key: string): Promise<UsageRecord[]> {
-    return (await this.storage.get(key)) as UsageRecord[] ?? []
-  }
 }
 ```
 
-### `usage-budget.ts` — Budget Logic
-
-Simplified from current implementation, same core logic:
+### `usage-budget.ts` — Budget Logic (async)
 
 ```typescript
 export class UsageBudget {
@@ -267,21 +352,91 @@ export class UsageBudget {
     this.lastNotifiedMonth = new Date().getMonth()
   }
 
-  check(): { status: 'ok' | 'warning' | 'exceeded'; message?: string } {
-    // Same logic as current UsageBudget.check()
-    // De-duplicate notifications per status change per month
-    // Return formatted message with progress bar
+  /** Check budget and return notification if status changed (async) */
+  async check(): Promise<{ status: 'ok' | 'warning' | 'exceeded'; message?: string }> {
+    const budget = this.config.monthlyBudget ?? 0
+    if (budget <= 0) return { status: 'ok' }
+
+    const { totalCost } = this.store.getMonthlyTotal()
+    const percent = totalCost / budget
+    const threshold = this.config.warningThreshold ?? 0.8
+    const currentMonth = new Date().getMonth()
+
+    // Reset notification tracking on month change
+    if (currentMonth !== this.lastNotifiedMonth) {
+      this.lastNotifiedStatus = 'ok'
+      this.lastNotifiedMonth = currentMonth
+    }
+
+    let status: 'ok' | 'warning' | 'exceeded' = 'ok'
+    if (percent >= 1) status = 'exceeded'
+    else if (percent >= threshold) status = 'warning'
+
+    // Only notify on status escalation (ok → warning → exceeded)
+    let message: string | undefined
+    if (status !== 'ok' && status !== this.lastNotifiedStatus) {
+      const bar = this.progressBar(percent)
+      message = status === 'exceeded'
+        ? `Budget exceeded! ${bar} $${totalCost.toFixed(2)} / $${budget.toFixed(2)}`
+        : `Budget warning: ${bar} $${totalCost.toFixed(2)} / $${budget.toFixed(2)} (${(percent * 100).toFixed(0)}%)`
+      this.lastNotifiedStatus = status
+    }
+
+    return { status, message }
   }
 
+  /** Get current budget status for /usage command */
   async getStatus(): Promise<{ status: string; used: number; budget: number; percent: number }> {
-    const { totalCost } = await this.store.getMonthlyTotal()
+    const { totalCost } = this.store.getMonthlyTotal()
     const budget = this.config.monthlyBudget ?? 0
-    // ... same status calculation
+    const percent = budget > 0 ? Math.round((totalCost / budget) * 100) : 0
+    let status = 'ok'
+    if (budget > 0) {
+      if (totalCost >= budget) status = 'exceeded'
+      else if (totalCost >= budget * (this.config.warningThreshold ?? 0.8)) status = 'warning'
+    }
+    return { status, used: totalCost, budget, percent }
+  }
+
+  private progressBar(percent: number): string {
+    const filled = Math.min(Math.round(percent * 10), 10)
+    return '█'.repeat(filled) + '░'.repeat(10 - filled)
   }
 }
 ```
 
-## Config Type
+## Types
+
+### UsageRecord (stored by plugin)
+
+```typescript
+interface UsageRecord {
+  id: string                // nanoid, generated by plugin
+  sessionId: string
+  agentName: string
+  tokensUsed: number
+  contextSize: number
+  cost?: { amount: number; currency: string }
+  timestamp: string         // ISO 8601
+}
+```
+
+### UsageRecordEvent (emitted by core on event bus)
+
+```typescript
+interface UsageRecordEvent {
+  sessionId: string
+  agentName: string
+  timestamp: string
+  tokensUsed: number
+  contextSize: number
+  cost?: { amount: number; currency: string }
+}
+```
+
+Same as `UsageRecord` minus `id` (plugin generates the id).
+
+### UsagePluginConfig
 
 ```typescript
 interface UsagePluginConfig {
@@ -291,37 +446,27 @@ interface UsagePluginConfig {
 }
 ```
 
-## Event Contracts
-
-### `usage:recorded` (Core → Plugin)
+### NotificationMessage (existing core type, used as-is)
 
 ```typescript
-interface UsageRecordEvent {
+interface NotificationMessage {
   sessionId: string
-  timestamp: string        // ISO 8601
-  tokensUsed: number
-  cost?: { amount: number; currency: string }
-}
-```
-
-### `notification:send` (Plugin → Notifications Plugin)
-
-```typescript
-interface NotificationEvent {
-  message: string
-  level: 'warning' | 'exceeded'
+  sessionName?: string
+  type: "completed" | "error" | "permission" | "input_required" | "budget_warning"
+  summary: string
+  deepLink?: string
 }
 ```
 
 ## Migration & Backward Compatibility
 
-- Old `~/.openacp/usage.json` is abandoned. No migration needed.
-- Users upgrading will lose historical usage data (accepted trade-off).
-- The `usage` service name stays the same, so any plugin querying `getService('usage')` continues to work.
-- Legacy config fields (`config.usage.*`) are handled by LifecycleManager's config resolution fallback.
+- Old `~/.openacp/usage.json` is abandoned. Users lose historical usage data (accepted).
+- The `usage` service name stays the same for plugin interop.
+- `UsageService` interface simplified: drops `getSummary(period)`, keeps `trackUsage` + `checkBudget`.
+- Telegram `/usage` command handler removed from core; plugin provides `/usage` via command registration.
 
 ## Testing Strategy
 
-- **usage-store.test.ts**: Test append, monthly totals, cleanup, month-partitioned keys
-- **usage-budget.test.ts**: Test budget check with warning/exceeded thresholds, month boundary reset, de-duplication
-- **index.test.ts**: Integration test — mock PluginContext, emit `usage:recorded`, verify storage + notification events
+- **usage-store.test.ts**: Test append, in-memory cache, debounced flush, monthly totals, cleanup, month-partitioned keys
+- **usage-budget.test.ts**: Test async budget check with warning/exceeded thresholds, month boundary reset, notification de-duplication, progress bar
+- **index.test.ts**: Integration test — mock PluginContext, emit `usage:recorded`, verify storage writes + `notifyAll()` calls via notification service
