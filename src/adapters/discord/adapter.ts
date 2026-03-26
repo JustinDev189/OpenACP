@@ -25,7 +25,7 @@ import type { AdapterCapabilities } from "../../core/channel.js";
 import type { DiscordChannelConfig } from "./types.js";
 import { SendQueue } from "../shared/primitives/send-queue.js";
 import { DiscordToolCallTracker } from "./tool-call-tracker.js";
-import { DraftManager } from "./draft-manager.js";
+import { DiscordDraftManager } from "./draft-manager.js";
 import { ActivityTracker } from "./activity.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
 import { PermissionHandler } from "./permissions.js";
@@ -64,7 +64,7 @@ export class DiscordAdapter extends MessagingAdapter {
   private discordConfig: DiscordChannelConfig;
   private sendQueue: SendQueue;
   private toolTracker: DiscordToolCallTracker;
-  private draftManager: DraftManager;
+  private draftManager: DiscordDraftManager;
   private skillManager!: SkillCommandManager;
   private permissionHandler!: PermissionHandler;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
@@ -97,7 +97,7 @@ export class DiscordAdapter extends MessagingAdapter {
 
     this.sendQueue = new SendQueue({ minInterval: 1000 });
     this.toolTracker = new DiscordToolCallTracker(this.sendQueue);
-    this.draftManager = new DraftManager(this.sendQueue);
+    this.draftManager = new DiscordDraftManager(this.sendQueue);
     this.fileService = core.fileService;
 
     // Wire discord.js rate limit events to send queue

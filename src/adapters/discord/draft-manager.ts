@@ -3,9 +3,17 @@ import { MessageDraft } from './streaming.js'
 import type { SendQueue } from '../shared/primitives/send-queue.js'
 import { detectAction, storeAction, buildActionKeyboard } from './action-detect.js'
 
-export class DraftManager {
-  drafts: Map<string, MessageDraft> = new Map()
-  textBuffers: Map<string, string> = new Map()
+/**
+ * Discord-specific draft manager.
+ *
+ * Note: Discord's MessageDraft has platform-specific features (truncation,
+ * message splitting, stripPattern) that diverge significantly from the shared
+ * Draft primitive. We keep the platform-specific MessageDraft for streaming
+ * while following the same naming convention as other migrated classes.
+ */
+export class DiscordDraftManager {
+  private drafts = new Map<string, MessageDraft>()
+  private textBuffers = new Map<string, string>()
 
   constructor(
     private sendQueue: SendQueue,
