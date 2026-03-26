@@ -36,22 +36,31 @@ interface CommandDef {
   usage?: string                   // 'on|off', '<agent-name>'
   category: 'system' | 'plugin'
   pluginName?: string              // '@openacp/speech' — auto-set by registry
-  handler(args: CommandArgs): Promise<CommandResponse>
+  // Handler returns CommandResponse OR void (backward compat with existing plugins)
+  // If void, handler used reply() for output. If CommandResponse, adapter renders it.
+  handler(args: CommandArgs): Promise<CommandResponse | void>
 }
 ```
+
+**Backward compatibility:** Existing plugins using `handler(): Promise<void>` with `args.reply()` continue to work. New commands should prefer returning `CommandResponse` for structured rendering. Registry detects void return and treats as `{ type: 'silent' }`.
 
 ### CommandArgs
 
 ```typescript
 interface CommandArgs {
   raw: string                      // raw text after command name
+  options?: Record<string, string> // parsed options (Discord slash commands pass typed options here)
   sessionId: string | null         // null if no active session
   channelId: string                // 'telegram', 'discord', 'slack'
   userId: string
-  // Core access for system commands
-  core?: OpenACPCore
+  // Escape hatch for mid-execution feedback (progress messages, message editing)
+  reply(content: string | CommandResponse): Promise<void>
+  // Restricted core access (not full OpenACPCore — uses CoreAccess interface)
+  coreAccess?: CoreAccess
 }
 ```
+
+**`reply()` escape hatch:** Most commands return a single `CommandResponse`. But some commands need mid-execution feedback (e.g., `/update` sends "Checking..." → "Updating..." → "Restarting..."). These commands call `reply()` during execution for intermediate messages, then return the final response. Adapter provides `reply()` implementation.
 
 ### CommandResponse
 
@@ -78,7 +87,78 @@ interface ListItem {
 
 ---
 
-## 2. CommandRegistry
+## 2. Multi-Step Commands & Platform-Specific Flows
+
+Some commands require multi-step interactive flows that cannot be expressed with a single `CommandResponse`:
+
+- `/new` — agent picker → workspace picker → custom path input → confirmation → session creation
+- `/resume` — session scanner → session picker → context loading
+- `/settings` — multi-level navigation menu with text input fields
+- `/update` — progress messages: "Checking..." → "Updating v1 → v2..." → "Restarting..."
+
+### Design: Two-Layer Architecture
+
+Commands are split into **core logic** (portable) and **platform orchestration** (adapter-specific):
+
+```
+Layer 1 — Core Logic (in CommandRegistry):
+  Handler returns structured CommandResponse
+  Portable across all adapters
+  Example: /cancel → check session exists → cancel → return { type: 'text', text: 'Cancelled' }
+
+Layer 2 — Platform Orchestration (in adapter, registered via CommandRegistry):
+  Handler uses reply() for mid-execution feedback
+  Uses platform-specific APIs (forum topics, message editing, slash command options)
+  Example: /new on Telegram → create topic → show agent picker keyboard → edit message on selection
+```
+
+### Rules:
+
+1. **Simple commands** (no multi-step, no platform API) → registered by core/plugins, return `CommandResponse`. Works on ALL adapters automatically.
+2. **Multi-step commands** → adapter registers its own handler via CommandRegistry with `category: 'system'`. Uses `args.reply()` + platform context. Different adapters can have different implementations of the same command.
+3. **If adapter doesn't register an override** → falls back to core handler (simple version). User still gets functionality, just simpler UI.
+
+### Example: `/new` command
+
+```typescript
+// Core registers simple fallback
+registry.register({
+  name: 'new',
+  category: 'system',
+  handler: async (args) => {
+    if (!args.raw.trim()) {
+      const agents = core.agentCatalog.list()
+      return { type: 'menu', title: 'Choose agent', options: agents.map(a => ({ label: a.name, command: `/new ${a.id}` })) }
+    }
+    await core.handleNewSession(args.channelId, args.userId, args.raw.trim())
+    return { type: 'silent' }
+  },
+})
+
+// Telegram adapter overrides with multi-step wizard
+registry.register({
+  name: 'new',
+  category: 'system',
+  pluginName: '@openacp/telegram',  // override marker
+  handler: async (args) => {
+    // Full wizard: create topic, agent picker with keyboard, workspace selection, etc.
+    // Uses args.reply() for mid-step feedback
+    // Uses Telegram-specific APIs
+  },
+})
+```
+
+### Override Priority
+
+When multiple handlers exist for the same command:
+1. **Adapter-specific** (matches current channelId) → highest priority
+2. **Core handler** → fallback
+
+Registry.execute() checks `channelId` against handler's `pluginName` to pick the right one.
+
+---
+
+## 3. CommandRegistry
 
 ```typescript
 class CommandRegistry {
@@ -109,10 +189,10 @@ Every plugin command has two names:
 
 Rules:
 1. System commands always own their short name — plugins cannot override
-2. First plugin to register a short name owns it
-3. If conflict: both lose short name, only qualified names available
-4. Registry logs warning on conflict
-5. `/help` shows short name when available, qualified when conflicted
+2. First plugin to register a short name owns it — keeps it even if another plugin registers same name later
+3. Later plugins with conflicting short name get qualified name only — first registrant is NOT affected
+4. Registry logs warning on conflict for the later plugin
+5. `/help` shows short name for winner, qualified name for loser
 
 ```
 Register 'tts' by @openacp/speech:
@@ -128,10 +208,10 @@ Register 'check' by @community/plugin-a:
   → short: /check ✓
 
 Register 'check' by @community/plugin-b:
-  → short: /check ✗ (conflict with plugin-a)
-  → Both lose short name
-  → qualified: /plugin-a:check, /plugin-b:check
-  → log warning
+  → short: /check ✗ (already owned by plugin-a)
+  → plugin-a KEEPS /check (first wins)
+  → plugin-b only accessible via /plugin-b:check
+  → log warning: "Plugin command 'check' from @community/plugin-b conflicts with @community/plugin-a, use /plugin-b:check"
 ```
 
 ### execute() Method
@@ -158,7 +238,7 @@ async execute(commandString: string, baseArgs: Omit<CommandArgs, 'raw'>): Promis
 
 ---
 
-## 3. System Commands
+## 4. System Commands
 
 Registered by core during boot, before plugins load.
 
@@ -247,7 +327,7 @@ export function registerSessionCommands(registry: CommandRegistry, core: OpenACP
 
 ---
 
-## 4. Plugin Commands
+## 5. Plugin Commands
 
 Plugins register commands in their `setup()` via `ctx.registerCommand()`.
 
@@ -396,7 +476,7 @@ ctx.registerCommand({
 
 ---
 
-## 5. Adapter Integration
+## 6. Adapter Integration
 
 ### Boot Flow
 
@@ -501,22 +581,42 @@ this.responseRenderers.set('menu', async (response, interaction) => {
 ### Button Callback Data
 
 ```typescript
+// Short-lived cache for callback data that exceeds 64 bytes
+const callbackCache = new Map<string, string>()  // id → full command string
+let callbackCounter = 0
+
 function toCallbackData(command: string): string {
   const data = `c/${command}`
-  if (data.length > 64) {
-    // Truncate: keep command name only
-    const name = command.split(' ')[0]
-    return `c/${name}`
+  if (data.length <= 64) return data
+
+  // Exceeded 64 bytes — store in cache, use short ID
+  const id = String(++callbackCounter)
+  callbackCache.set(id, command)
+  // Clean old entries (keep last 1000)
+  if (callbackCache.size > 1000) {
+    const firstKey = callbackCache.keys().next().value
+    callbackCache.delete(firstKey)
   }
-  return data
+  return `c/#${id}`  // 'c/#42' — always < 64 bytes
+}
+
+function fromCallbackData(data: string): string {
+  if (data.startsWith('c/#')) {
+    const id = data.slice(3)
+    return callbackCache.get(id) ?? data.slice(2)
+  }
+  return data.slice(2)  // remove 'c/' prefix
 }
 ```
 
-Prefix `c/` for command dispatch. Existing prefixes (`p:` for permissions) unchanged.
+**Prefix scope clarification:**
+- `c/` — NEW: command dispatch from CommandRegistry (menu buttons, confirm buttons)
+- `p:` — EXISTING: permission request buttons (unchanged)
+- Other existing prefixes (`d:`, `v:`, `tn:`, `s:`, `ar:`, `sm:`, `ag:`, `na:`, `vb:`) — these are adapter-specific stateful UI interactions. They remain UNCHANGED and are NOT migrated to `c/`. They handle message editing, keyboard state updates, and multi-step UI flows that are not command dispatches.
 
 ---
 
-## 6. Help System
+## 7. Help System
 
 Auto-generated from CommandRegistry.
 
@@ -563,7 +663,7 @@ Adapters override 'menu' renderer → help rendered as:
 
 ---
 
-## 7. Migration — Remove Hardcoded Commands
+## 8. Migration — Remove Hardcoded Commands
 
 ### What gets removed from adapters
 
@@ -596,22 +696,36 @@ Adapters override 'menu' renderer → help rendered as:
 | `plugins/telegram/commands/tunnel.ts` | `src/plugins/tunnel/index.ts` | /tunnel, /tunnels |
 | `plugins/telegram/commands/usage.ts` | `src/plugins/usage/index.ts` | /usage |
 | `plugins/telegram/commands/dangerous.ts` | `src/plugins/security/index.ts` | /dangerous |
-| `plugins/telegram/commands/integrate.ts` | core or plugin | /integrate |
-| `plugins/telegram/commands/verbosity.ts` | adapter-specific (per-adapter setting) | /verbosity |
+| `plugins/telegram/commands/integrate.ts` | `src/core/commands/admin.ts` | /integrate |
+| `plugins/telegram/commands/verbosity.ts` | adapter-specific | /verbosity |
+| `plugins/telegram/commands/settings.ts` | adapter-specific (multi-step wizard) | /settings |
+| `plugins/telegram/commands/resume.ts` | adapter override (multi-step) | /resume |
+| `plugins/telegram/commands/archive.ts` | adapter-specific (Telegram topics) | /archive |
+| `plugins/telegram/commands/summary.ts` | `src/core/commands/session.ts` | /summary |
+| `plugins/telegram/commands/new-session.ts` | adapter override (multi-step wizard) | /new |
+| `plugins/telegram/commands/handoff.ts` | `src/core/commands/session.ts` | /handoff |
+
+### Command Name Migration
+
+| Old name | New name | Note |
+|----------|----------|------|
+| `/enable_dangerous` | `/dangerous on` | Consolidated into subcommand |
+| `/disable_dangerous` | `/dangerous off` | Consolidated into subcommand |
+| `/text_to_speech` | `/tts` | Shortened, old name kept as alias |
 
 ### Commands that stay adapter-specific
 
-Some commands are inherently adapter-specific and can stay in adapter code, registered via CommandRegistry:
+Registered by adapter plugin in its setup() via CommandRegistry (not by core). Different adapters can have completely different implementations:
 
 - `/verbosity` — each adapter has different display settings
 - `/archive` — Telegram topic archiving (Telegram-specific)
-- `/summary` — could be system command
-
-These are registered by the adapter plugin in its setup(), not by core.
+- `/settings` — multi-level navigation UI (platform-specific)
+- `/new` override — Telegram uses multi-step wizard with forum topics, Discord uses slash command options
+- `/resume` override — workspace picker flow (platform-specific UI)
 
 ---
 
-## 8. New File Structure
+## 9. New File Structure
 
 ```
 src/core/
@@ -645,7 +759,7 @@ src/plugins/
 
 ---
 
-## 9. Testing Strategy
+## 10. Testing Strategy
 
 ### Unit Tests
 
