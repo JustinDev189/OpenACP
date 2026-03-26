@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MiddlewareChain } from '../middleware-chain.js'
+import { ErrorTracker } from '../error-tracker.js'
 
 type NextFn<T = unknown> = (payload?: T) => Promise<T | null>
 
@@ -178,5 +179,68 @@ describe('MiddlewareChain', () => {
     // coreHandler should only be called once despite double next()
     expect(coreHandler).toHaveBeenCalledTimes(1)
     expect(nextCallCount).toBe(2)
+  })
+
+  it('skips disabled plugin middleware', async () => {
+    const tracker = new ErrorTracker({ maxErrors: 1, windowMs: 60000 })
+    chain.setErrorTracker(tracker)
+
+    const handler = vi.fn(async (_p: unknown, next: NextFn) => next())
+    chain.add('message:incoming', 'bad-plugin', { handler })
+
+    // Disable the plugin by exceeding error budget
+    tracker.increment('bad-plugin')
+    expect(tracker.isDisabled('bad-plugin')).toBe(true)
+
+    // Execute — handler should NOT be called
+    const coreHandler = vi.fn().mockImplementation((p: unknown) => p)
+    await chain.execute('message:incoming', { text: 'hi' }, coreHandler)
+    expect(handler).not.toHaveBeenCalled()
+    // Core handler should still be called
+    expect(coreHandler).toHaveBeenCalled()
+  })
+
+  it('increments error tracker when middleware throws', async () => {
+    const tracker = new ErrorTracker({ maxErrors: 5, windowMs: 60000 })
+    chain.setErrorTracker(tracker)
+    chain.setErrorHandler(() => {}) // suppress error logging
+
+    chain.add('message:incoming', 'flaky-plugin', {
+      handler: async () => { throw new Error('oops') },
+    })
+
+    await chain.execute('message:incoming', { text: 'hi' }, (p) => p)
+
+    // Error should have been tracked
+    const entry = tracker as unknown as { errors: Map<string, { count: number }> }
+    // Use isDisabled as indirect check — not disabled yet (need 5)
+    expect(tracker.isDisabled('flaky-plugin')).toBe(false)
+
+    // Trigger 4 more to reach the threshold
+    for (let i = 0; i < 4; i++) {
+      await chain.execute('message:incoming', { text: 'hi' }, (p) => p)
+    }
+    expect(tracker.isDisabled('flaky-plugin')).toBe(true)
+  })
+
+  it('allows non-disabled plugins to still execute', async () => {
+    const tracker = new ErrorTracker({ maxErrors: 1, windowMs: 60000 })
+    chain.setErrorTracker(tracker)
+
+    const goodHandler = vi.fn(async (_p: unknown, next: NextFn) => next())
+    const badHandler = vi.fn(async (_p: unknown, next: NextFn) => next())
+
+    chain.add('message:incoming', 'good-plugin', { handler: goodHandler })
+    chain.add('message:incoming', 'bad-plugin', { handler: badHandler })
+
+    // Disable only bad-plugin
+    tracker.increment('bad-plugin')
+
+    const coreHandler = vi.fn().mockImplementation((p: unknown) => p)
+    await chain.execute('message:incoming', { text: 'hi' }, coreHandler)
+
+    expect(goodHandler).toHaveBeenCalled()
+    expect(badHandler).not.toHaveBeenCalled()
+    expect(coreHandler).toHaveBeenCalled()
   })
 })

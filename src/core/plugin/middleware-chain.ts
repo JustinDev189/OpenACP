@@ -1,3 +1,5 @@
+import type { ErrorTracker } from './error-tracker.js'
+
 const MIDDLEWARE_TIMEOUT_MS = 5000
 
 type HandlerEntry = {
@@ -9,6 +11,7 @@ type HandlerEntry = {
 export class MiddlewareChain {
   private chains = new Map<string, Array<HandlerEntry>>()
   private errorHandler?: (pluginName: string, error: Error) => void
+  private errorTracker?: ErrorTracker
 
   add(
     hook: string,
@@ -59,6 +62,13 @@ export class MiddlewareChain {
         }
 
         const entry = sorted[index]
+
+        // Skip disabled plugins
+        if (this.errorTracker?.isDisabled(entry.pluginName)) {
+          const skipFn = buildNext(index + 1, currentPayload)
+          return skipFn()
+        }
+
         const nextFn = buildNext(index + 1, currentPayload)
 
         // Wrap next to detect when it has been called and cache
@@ -97,6 +107,8 @@ export class MiddlewareChain {
           if (this.errorHandler) {
             this.errorHandler(entry.pluginName, err instanceof Error ? err : new Error(String(err)))
           }
+          // Track error for circuit-breaking
+          this.errorTracker?.increment(entry.pluginName)
           // Skip this handler — pass ORIGINAL payload to next
           return nextFn()
         }
@@ -127,5 +139,9 @@ export class MiddlewareChain {
 
   setErrorHandler(fn: (pluginName: string, error: Error) => void): void {
     this.errorHandler = fn
+  }
+
+  setErrorTracker(tracker: ErrorTracker): void {
+    this.errorTracker = tracker
   }
 }
