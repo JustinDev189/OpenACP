@@ -22,6 +22,7 @@ import type {
   PermissionRequest,
   SetConfigOptionValue,
 } from "../types.js";
+import { FileService } from "../utils/file-service.js";
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type {
   ListSessionsResponse,
@@ -499,7 +500,10 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
       // ── File operations ──────────────────────────────────────────────────
       async readTextFile(params) {
-        const content = await fs.promises.readFile(params.path, "utf-8");
+        const content = await FileService.readTextFileWithRange(params.path, {
+          line: (params as any).line ?? undefined,
+          limit: (params as any).limit ?? undefined,
+        });
         return { content };
       },
 
