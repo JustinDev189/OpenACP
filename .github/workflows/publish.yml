@@ -35,8 +35,15 @@ jobs:
 
       - run: pnpm build:publish
 
-      - name: Publish
+      - name: Publish @openacp/cli
         working-directory: dist-publish
+        run: npm publish --access=public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @openacp/plugin-sdk
+        if: hashFiles('dist-publish-sdk/package.json') != ''
+        working-directory: dist-publish-sdk
         run: npm publish --access=public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

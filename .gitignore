@@ -5,6 +5,8 @@ dist/
 *.tsbuildinfo
 .env
 dist-publish/
+dist-publish-sdk/
+packages/*/dist/
 .worktrees/
 ui/node_modules/
 ui/dist/
