@@ -300,7 +300,7 @@ export default plugin
   fs.writeFileSync(
     path.join(targetDir, 'src', '__tests__', 'index.test.ts'),
     `import { describe, it, expect } from 'vitest'
-import { createTestContext } from '@openacp/plugin-sdk/testing'
+import { createTestContext, createTestInstallContext } from '@openacp/plugin-sdk/testing'
 import plugin from '../index.js'
 
 describe('${pluginName}', () => {
@@ -311,7 +311,11 @@ describe('${pluginName}', () => {
   })
 
   it('sets up without errors', async () => {
-    const ctx = createTestContext({ pluginName: '${pluginName}' })
+    const ctx = createTestContext({
+      pluginName: '${pluginName}',
+      pluginConfig: { enabled: true },
+      permissions: plugin.permissions,
+    })
     await expect(plugin.setup(ctx)).resolves.not.toThrow()
   })
 
@@ -323,8 +327,11 @@ describe('${pluginName}', () => {
 
   it('installs without errors', async () => {
     if (plugin.install) {
-      const ctx = createTestContext({ pluginName: '${pluginName}' })
-      await expect(plugin.install(ctx as any)).resolves.not.toThrow()
+      const ctx = createTestInstallContext({
+        pluginName: '${pluginName}',
+        terminalResponses: { password: [''], confirm: [true], select: ['apiKey'] },
+      })
+      await expect(plugin.install(ctx)).resolves.not.toThrow()
     }
   })
 })
