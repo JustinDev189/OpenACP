@@ -12,6 +12,8 @@ import type {
 import { createChildLogger } from "../../core/utils/log.js";
 const log = createChildLogger({ module: "telegram" });
 import type { TelegramChannelConfig } from "./types.js";
+import type { CommandRegistry } from "../../core/command-registry.js";
+import type { CommandResponse } from "../../core/plugin/types.js";
 import {
   ensureTopics,
   createSessionTopic,
@@ -112,6 +114,8 @@ export class TelegramAdapter extends MessagingAdapter {
   private skillManager!: SkillCommandManager;
   private fileService!: FileServiceInterface;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
+  private callbackCache = new Map<string, string>();
+  private callbackCounter = 0;
 
   private getThreadId(sessionId: string): number {
     const threadId = this._sessionThreadIds.get(sessionId);
@@ -257,6 +261,89 @@ export class TelegramAdapter extends MessagingAdapter {
       (sessionId) => this.core.sessionManager.getSession(sessionId),
       (notification) => this.sendNotification(notification),
     );
+
+    // Generic CommandRegistry dispatch — handles any command registered via plugin system.
+    // Must be early so registry commands run before legacy bot.command() handlers.
+    this.bot.on("message:text", async (ctx, next) => {
+      const text = ctx.message?.text;
+      if (!text?.startsWith("/")) return next();
+
+      const registry = this.core.lifecycleManager?.serviceRegistry?.get<CommandRegistry>("command-registry");
+      if (!registry) return next();
+
+      // Extract command name (remove / and @botname suffix)
+      const commandName = text.split(" ")[0].slice(1).split("@")[0];
+      const def = registry.get(commandName);
+      if (!def) return next(); // not in registry, fall through to existing handlers
+
+      const chatId = ctx.chat.id;
+      const topicId = ctx.message.message_thread_id;
+
+      try {
+        const sessionId =
+          topicId != null
+            ? this.core.sessionManager.getSessionByThread("telegram", String(topicId))?.id ?? null
+            : null;
+
+        const response = await registry.execute(text, {
+          raw: "",
+          sessionId,
+          channelId: "telegram",
+          userId: String(ctx.from?.id),
+          reply: async (content) => {
+            if (typeof content === "string") {
+              await ctx.reply(content);
+            } else if (typeof content === "object" && content !== null && "type" in content) {
+              await this.renderCommandResponse(content as CommandResponse, chatId, topicId);
+            }
+          },
+        });
+
+        if (response.type !== "silent") {
+          await this.renderCommandResponse(response, chatId, topicId);
+        }
+      } catch (err) {
+        await ctx.reply(`\u26a0\ufe0f Command failed: ${String(err)}`);
+      }
+    });
+
+    // Callback query handler for command buttons (c/ prefix)
+    this.bot.callbackQuery(/^c\//, async (ctx) => {
+      const data = ctx.callbackQuery.data;
+      const command = this.fromCallbackData(data);
+
+      const registry = this.core.lifecycleManager?.serviceRegistry?.get<CommandRegistry>("command-registry");
+      if (!registry) return;
+
+      const chatId = ctx.chat!.id;
+      const topicId = ctx.callbackQuery.message?.message_thread_id;
+
+      try {
+        const sessionId =
+          topicId != null
+            ? this.core.sessionManager.getSessionByThread("telegram", String(topicId))?.id ?? null
+            : null;
+
+        const response = await registry.execute(command, {
+          raw: "",
+          sessionId,
+          channelId: "telegram",
+          userId: String(ctx.from?.id),
+          reply: async (content) => {
+            if (typeof content === "string") {
+              await ctx.editMessageText(content).catch(() => {});
+            }
+          },
+        });
+
+        await ctx.answerCallbackQuery();
+        if (response.type !== "silent") {
+          await this.renderCommandResponse(response, chatId, topicId);
+        }
+      } catch {
+        await ctx.answerCallbackQuery({ text: "Command failed" });
+      }
+    });
 
     // Callback registration order matters!
     setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
@@ -447,6 +534,94 @@ export class TelegramAdapter extends MessagingAdapter {
     }
     await this.bot.stop();
     log.info("Telegram bot stopped");
+  }
+
+  // --- CommandRegistry response rendering ---
+
+  private async renderCommandResponse(
+    response: CommandResponse,
+    chatId: number,
+    topicId?: number,
+  ): Promise<void> {
+    switch (response.type) {
+      case "text":
+        await this.bot.api.sendMessage(chatId, response.text, {
+          message_thread_id: topicId,
+        });
+        break;
+      case "error":
+        await this.bot.api.sendMessage(
+          chatId,
+          `\u26a0\ufe0f ${response.message}`,
+          { message_thread_id: topicId },
+        );
+        break;
+      case "menu": {
+        const keyboard = response.options.map((opt) => [
+          {
+            text: `${opt.label}${opt.hint ? ` \u2014 ${opt.hint}` : ""}`,
+            callback_data: this.toCallbackData(opt.command),
+          },
+        ]);
+        await this.bot.api.sendMessage(chatId, response.title, {
+          message_thread_id: topicId,
+          reply_markup: { inline_keyboard: keyboard },
+        });
+        break;
+      }
+      case "list": {
+        const lines = response.items.map(
+          (i) => `\u2022 ${i.label}${i.detail ? ` \u2014 ${i.detail}` : ""}`,
+        );
+        const text = `${response.title}\n${lines.join("\n")}`;
+        await this.bot.api.sendMessage(chatId, text, {
+          message_thread_id: topicId,
+        });
+        break;
+      }
+      case "confirm": {
+        const buttons = [
+          [
+            {
+              text: "\u2705 Yes",
+              callback_data: this.toCallbackData(response.onYes),
+            },
+          ],
+        ];
+        if (response.onNo) {
+          buttons[0].push({
+            text: "\u274c No",
+            callback_data: this.toCallbackData(response.onNo),
+          });
+        }
+        await this.bot.api.sendMessage(chatId, response.question, {
+          message_thread_id: topicId,
+          reply_markup: { inline_keyboard: buttons },
+        });
+        break;
+      }
+      case "silent":
+        break;
+    }
+  }
+
+  private toCallbackData(command: string): string {
+    const data = `c/${command}`;
+    if (data.length <= 64) return data;
+    const id = String(++this.callbackCounter);
+    this.callbackCache.set(id, command);
+    if (this.callbackCache.size > 1000) {
+      const first = this.callbackCache.keys().next().value;
+      if (first) this.callbackCache.delete(first);
+    }
+    return `c/#${id}`;
+  }
+
+  private fromCallbackData(data: string): string {
+    if (data.startsWith("c/#")) {
+      return this.callbackCache.get(data.slice(3)) ?? data.slice(2);
+    }
+    return data.slice(2);
   }
 
   private setupRoutes(): void {
