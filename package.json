@@ -1,11 +1,14 @@
 {
   "name": "@openacp/cli",
-  "version": "2026.0326.0",
+  "version": "2026.0326.2",
   "private": true,
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "bin": {
     "openacp": "dist/cli.js"

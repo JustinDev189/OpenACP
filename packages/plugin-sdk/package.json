@@ -1,13 +1,21 @@
 {
   "name": "@openacp/plugin-sdk",
-  "version": "2026.0326.0",
+  "version": "2026.0326.2",
   "description": "SDK for building OpenACP plugins — types, base classes, and testing utilities",
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./testing": { "types": "./dist/testing.d.ts", "import": "./dist/testing.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
   },
-  "files": ["dist/"],
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
@@ -25,6 +33,11 @@
     "directory": "packages/plugin-sdk"
   },
   "homepage": "https://github.com/Open-ACP/OpenACP",
-  "keywords": ["openacp", "plugin", "sdk", "testing"],
+  "keywords": [
+    "openacp",
+    "plugin",
+    "sdk",
+    "testing"
+  ],
   "license": "MIT"
 }
