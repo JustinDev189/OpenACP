@@ -85,4 +85,53 @@ describe('LifecycleManager', () => {
     await mgr.boot([a])
     expect(a.setup).toHaveBeenCalled()
   })
+
+  it('resolves plugin config from ConfigManager', async () => {
+    const plugin = makePlugin('@openacp/speech', {
+      permissions: ['services:register'],
+      setup: vi.fn(async (ctx) => {
+        expect(ctx.pluginConfig).toEqual({ groqApiKey: 'test-key' })
+      }),
+    })
+    const mgr = new LifecycleManager({
+      config: { get: () => ({ speech: { groqApiKey: 'test-key' } }) } as any,
+    })
+    await mgr.boot([plugin])
+    expect(plugin.setup).toHaveBeenCalled()
+  })
+
+  it('resolves plugin config from new format (plugins.builtin)', async () => {
+    const plugin = makePlugin('@openacp/speech', {
+      permissions: ['services:register'],
+      setup: vi.fn(async (ctx) => {
+        expect(ctx.pluginConfig).toEqual({ groqApiKey: 'new-key' })
+      }),
+    })
+    const mgr = new LifecycleManager({
+      config: {
+        get: () => ({
+          plugins: {
+            builtin: {
+              '@openacp/speech': { config: { groqApiKey: 'new-key' } },
+            },
+          },
+        }),
+      } as any,
+    })
+    await mgr.boot([plugin])
+    expect(plugin.setup).toHaveBeenCalled()
+  })
+
+  it('passes core to PluginContext', async () => {
+    const mockCore = { sessionManager: {} }
+    const plugin = makePlugin('test-core', {
+      permissions: ['kernel:access'],
+      setup: vi.fn(async (ctx) => {
+        expect(ctx.core).toBe(mockCore)
+      }),
+    })
+    const mgr = new LifecycleManager({ core: mockCore })
+    await mgr.boot([plugin])
+    expect(plugin.setup).toHaveBeenCalled()
+  })
 })

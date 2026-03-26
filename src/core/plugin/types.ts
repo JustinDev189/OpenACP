@@ -148,6 +148,8 @@ export interface PluginContext {
   sessions: SessionManager
   config: ConfigManager
   eventBus: EventBus
+  /** Direct access to OpenACPCore instance. Requires 'kernel:access'. */
+  core: unknown
 }
 
 // ============================================================

@@ -127,6 +127,7 @@ export class OpenACPCore {
       eventBus: this.eventBus as any,
       sessions: this.sessionManager,
       config: this.configManager,
+      core: this,
       storagePath: path.join(os.homedir(), ".openacp", "plugins", "data"),
     });
 

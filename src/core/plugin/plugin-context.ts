@@ -30,6 +30,7 @@ interface CreatePluginContextOpts {
   storagePath: string
   sessions: unknown
   config: unknown
+  core?: unknown
   log?: Logger
 }
 
@@ -50,6 +51,7 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
     storagePath,
     sessions,
     config,
+    core,
   } = opts
 
   // Track registered items for cleanup
@@ -158,6 +160,11 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
     get eventBus() {
       requirePermission(permissions, 'kernel:access', 'eventBus')
       return eventBus as any
+    },
+
+    get core() {
+      requirePermission(permissions, 'kernel:access', 'core')
+      return core
     },
 
     cleanup(): void {

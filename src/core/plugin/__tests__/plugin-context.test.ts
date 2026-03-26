@@ -110,6 +110,35 @@ describe('PluginContext permission enforcement', () => {
     const { ctx } = makeContext([])
     expect(() => ctx.sessions).toThrow(/kernel:access/)
   })
+
+  it('exposes core with kernel:access permission', () => {
+    const mockCore = { sessionManager: {} }
+    const serviceRegistry = new ServiceRegistry()
+    const middlewareChain = new MiddlewareChain()
+    const errorTracker = new ErrorTracker()
+    const eventBus = makeEventBus()
+    const storagePath = mkdtempSync(join(tmpdir(), 'plugin-ctx-test-'))
+
+    const ctx = createPluginContext({
+      pluginName: 'test-plugin',
+      pluginConfig: {},
+      permissions: ['kernel:access'],
+      serviceRegistry,
+      middlewareChain,
+      errorTracker,
+      eventBus: eventBus as any,
+      storagePath,
+      sessions: {},
+      config: {},
+      core: mockCore,
+    })
+    expect(ctx.core).toBe(mockCore)
+  })
+
+  it('throws when accessing core without kernel:access', () => {
+    const { ctx } = makeContext([])
+    expect(() => ctx.core).toThrow(/permission/i)
+  })
 })
 
 describe('PluginContext identity and log', () => {

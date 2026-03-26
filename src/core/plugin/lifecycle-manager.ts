@@ -18,6 +18,39 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
+function resolvePluginConfig(pluginName: string, configManager: unknown): Record<string, unknown> {
+  try {
+    const allConfig = (configManager as any)?.get?.() ?? {}
+    // Try new format: plugins.builtin['@openacp/speech'].config
+    const pluginEntry = allConfig.plugins?.builtin?.[pluginName]
+    if (pluginEntry?.config && Object.keys(pluginEntry.config).length > 0) {
+      return pluginEntry.config
+    }
+    // Fallback to legacy config sections
+    const legacyMap: Record<string, string> = {
+      '@openacp/security': 'security',
+      '@openacp/speech': 'speech',
+      '@openacp/tunnel': 'tunnel',
+      '@openacp/usage': 'usage',
+      '@openacp/file-service': 'files',
+      '@openacp/api-server': 'api',
+      '@openacp/telegram': 'channels.telegram',
+      '@openacp/discord': 'channels.discord',
+      '@openacp/slack': 'channels.slack',
+    }
+    const legacyKey = legacyMap[pluginName]
+    if (legacyKey) {
+      const parts = legacyKey.split('.')
+      let obj: any = allConfig
+      for (const p of parts) obj = obj?.[p]
+      if (obj && typeof obj === 'object') return { ...obj }
+    }
+  } catch {
+    // Gracefully degrade — return empty config
+  }
+  return {}
+}
+
 export interface LifecycleManagerOpts {
   serviceRegistry?: ServiceRegistry
   middlewareChain?: MiddlewareChain
@@ -30,6 +63,7 @@ export interface LifecycleManagerOpts {
   storagePath?: string
   sessions?: unknown
   config?: unknown
+  core?: unknown
   log?: Logger
 }
 
@@ -42,6 +76,7 @@ export class LifecycleManager {
   private storagePath: string
   private sessions: unknown
   private config: unknown
+  private core: unknown
   private log: Logger | undefined
 
   private contexts = new Map<string, ReturnType<typeof createPluginContext>>()
@@ -69,6 +104,7 @@ export class LifecycleManager {
     this.storagePath = opts?.storagePath ?? '/tmp/openacp-plugins'
     this.sessions = opts?.sessions ?? {}
     this.config = opts?.config ?? {}
+    this.core = opts?.core
     this.log = opts?.log
   }
 
@@ -103,9 +139,10 @@ export class LifecycleManager {
       }
 
       // Create context for this plugin
+      const pluginConfig = resolvePluginConfig(plugin.name, this.config)
       const ctx = createPluginContext({
         pluginName: plugin.name,
-        pluginConfig: {},
+        pluginConfig,
         permissions: plugin.permissions ?? [],
         serviceRegistry: this.serviceRegistry,
         middlewareChain: this.middlewareChain,
@@ -114,6 +151,7 @@ export class LifecycleManager {
         storagePath: `${this.storagePath}/${plugin.name}`,
         sessions: this.sessions,
         config: this.config,
+        core: this.core,
         log: this.log,
       })
 
