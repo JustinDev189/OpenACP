@@ -75,19 +75,13 @@ export class CommandRegistry {
     return this.commands.get(name)
   }
 
-  /** Remove a command by short name. Also removes its qualified name entry. */
+  /** Remove a command by name (short or qualified). Also removes its qualified name entry. */
   unregister(name: string): void {
     const cmd = this.commands.get(name)
-    if (cmd) {
-      this.commands.delete(name)
-      // Also remove qualified name
-      if (cmd.scope) {
-        this.commands.delete(`${cmd.scope}:${name}`)
-      }
-    }
-    // Also try removing as qualified name
-    if (!cmd) {
-      this.commands.delete(name)
+    if (!cmd) return
+    this.commands.delete(name)
+    if (cmd.scope) {
+      this.commands.delete(`${cmd.scope}:${name}`)
     }
   }
 

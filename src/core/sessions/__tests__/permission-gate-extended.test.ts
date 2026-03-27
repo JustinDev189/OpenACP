@@ -73,7 +73,7 @@ describe('PermissionGate - extended edge cases', () => {
   })
 
   describe('concurrent setPending', () => {
-    it('new setPending overwrites previous without waiting', async () => {
+    it('new setPending rejects previous and activates new one', async () => {
       const gate = new PermissionGate()
 
       const p1 = gate.setPending(mockRequest)
@@ -81,10 +81,13 @@ describe('PermissionGate - extended edge cases', () => {
 
       const request2 = { ...mockRequest, id: 'req-2' }
       const p2 = gate.setPending(request2)
-      // p2 overwrites p1
+      // p2 supersedes p1
 
       expect(gate.currentRequest?.id).toBe('req-2')
       expect(gate.requestId).toBe('req-2')
+
+      // p1 should be rejected with superseded error
+      await expect(p1).rejects.toThrow('Superseded by new permission request')
 
       gate.resolve('allow')
       const result = await p2

@@ -26,6 +26,7 @@ export class MiddlewareChain {
     const existing = this.chains.get(hook)
     if (existing) {
       existing.push(entry)
+      existing.sort((a, b) => a.priority - b.priority)
     } else {
       this.chains.set(hook, [entry])
     }
@@ -41,8 +42,8 @@ export class MiddlewareChain {
       return coreHandler(payload)
     }
 
-    // Sort by priority (lower = earlier), maintaining registration order for equal priorities
-    const sorted = [...handlers].sort((a, b) => a.priority - b.priority)
+    // Handlers are pre-sorted by priority at registration time
+    const sorted = handlers
 
     // Build the chain
     let cachedResult: { value: T | null } | undefined = undefined

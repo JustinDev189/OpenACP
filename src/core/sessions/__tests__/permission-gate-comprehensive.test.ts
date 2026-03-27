@@ -226,24 +226,53 @@ describe("PermissionGate — Comprehensive Tests", () => {
   });
 
   describe("overwriting pending request", () => {
-    it("new setPending overwrites previous (previous promise hangs)", async () => {
+    it("new setPending rejects previous promise and activates new one", async () => {
       const gate = new PermissionGate();
 
-      // First request — will never be resolved now
+      // First request — will be rejected when second arrives
       const first = gate.setPending(makeRequest("first"));
 
-      // Second request overwrites
+      // Second request supersedes first
       const second = gate.setPending(makeRequest("second"));
 
       expect(gate.requestId).toBe("second");
+
+      // First promise should reject with superseded error
+      await expect(first).rejects.toThrow("Superseded by new permission request");
 
       gate.resolve("allow");
 
       const result = await second;
       expect(result).toBe("allow");
+    });
 
-      // First promise is orphaned — resolving won't help since resolveFn was replaced
-      // This is expected behavior
+    it("triple setPending rejects first two, resolves third", async () => {
+      const gate = new PermissionGate();
+
+      const first = gate.setPending(makeRequest("first"));
+      const second = gate.setPending(makeRequest("second"));
+      const third = gate.setPending(makeRequest("third"));
+
+      await expect(first).rejects.toThrow("Superseded by new permission request");
+      await expect(second).rejects.toThrow("Superseded by new permission request");
+
+      gate.resolve("allow");
+      const result = await third;
+      expect(result).toBe("allow");
+    });
+
+    it("setPending after resolved request does not reject (no pending promise)", async () => {
+      const gate = new PermissionGate();
+
+      const first = gate.setPending(makeRequest("first"));
+      gate.resolve("allow");
+      await first;
+
+      // Second setPending after first is resolved — no rejection should happen
+      const second = gate.setPending(makeRequest("second"));
+      gate.resolve("allow");
+      const result = await second;
+      expect(result).toBe("allow");
     });
   });
 
