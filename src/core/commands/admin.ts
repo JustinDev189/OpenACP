@@ -43,7 +43,6 @@ export function registerAdminCommands(registry: CommandRegistry, _core: unknown)
           options: [
             { label: 'Telegram', command: '/integrate telegram' },
             { label: 'Discord', command: '/integrate discord' },
-            { label: 'Slack', command: '/integrate slack' },
           ],
         } satisfies CommandResponse
       }

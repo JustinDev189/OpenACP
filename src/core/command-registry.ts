@@ -12,7 +12,7 @@ interface RegisteredCommand extends CommandDef {
  * - System commands always own the short name.
  * - Among plugins, the first to register wins the short name.
  * - Every plugin command also gets a qualified name: `scope:name`.
- * - Adapter plugins (@openacp/telegram, @openacp/discord, @openacp/slack)
+ * - Adapter plugins (@openacp/telegram, @openacp/discord)
  *   registering a command that already exists → stored as an override
  *   keyed by `channelId:commandName`, used when channelId matches.
  */
@@ -23,7 +23,7 @@ export class CommandRegistry {
   /** Adapter-specific overrides: `channelId:commandName` → RegisteredCommand */
   private overrides = new Map<string, RegisteredCommand>()
 
-  private static ADAPTER_SCOPES = new Set(['telegram', 'discord', 'slack'])
+  private static ADAPTER_SCOPES = new Set(['telegram', 'discord'])
 
   /**
    * Register a command definition.

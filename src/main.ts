@@ -127,6 +127,93 @@ export async function startServer(opts?: StartServerOptions) {
     // Boot all built-in plugins in dependency order
     await core.lifecycleManager.boot(corePlugins)
 
+    // Load community plugins from registry (npm and local sources)
+    try {
+      const communityPlugins: import('./core/plugin/types.js').OpenACPPlugin[] = []
+      const npmPlugins = pluginRegistry.listBySource('npm')
+      const localPlugins = pluginRegistry.listBySource('local')
+      const allCommunityEntries = new Map([...npmPlugins, ...localPlugins])
+
+      for (const [name, entry] of allCommunityEntries) {
+        if (!entry.enabled) continue
+
+        try {
+          let modulePath: string
+
+          if (name.startsWith('/') || name.startsWith('.')) {
+            // Absolute or relative path (local install via `plugin add /path/to/plugin`)
+            const resolved = path.resolve(name)
+            const pkgPath = path.join(resolved, 'package.json')
+            const pkg = JSON.parse(await fs.promises.readFile(pkgPath, 'utf-8'))
+            modulePath = path.join(resolved, pkg.main || 'dist/index.js')
+          } else {
+            // npm package: try direct name first, then scan node_modules for matching plugin name
+            const nodeModulesDir = path.join(OPENACP_DIR, 'plugins', 'node_modules')
+            let pkgDir = path.join(nodeModulesDir, name)
+
+            if (!fs.existsSync(path.join(pkgDir, 'package.json'))) {
+              // Plugin name doesn't match npm package name — scan installed packages
+              // Only consider packages that are actual OpenACP plugins (by keywords or scope)
+              let found = false
+              const scopes = fs.readdirSync(nodeModulesDir).filter(d => d.startsWith('@'))
+              for (const scope of scopes) {
+                const scopeDir = path.join(nodeModulesDir, scope)
+                const pkgs = fs.readdirSync(scopeDir)
+                for (const pkg of pkgs) {
+                  const candidateDir = path.join(scopeDir, pkg)
+                  const candidatePkgPath = path.join(candidateDir, 'package.json')
+                  if (fs.existsSync(candidatePkgPath)) {
+                    try {
+                      const candidatePkg = JSON.parse(fs.readFileSync(candidatePkgPath, 'utf-8'))
+                      const npmName = candidatePkg.name as string | undefined
+                      const keywords = Array.isArray(candidatePkg.keywords) ? candidatePkg.keywords as string[] : []
+                      const isOpenACPPlugin = npmName?.startsWith('@openacp/') || keywords.includes('openacp-plugin')
+                      if (!isOpenACPPlugin) continue
+
+                      const mainPath = path.join(candidateDir, candidatePkg.main || 'dist/index.js')
+                      if (fs.existsSync(mainPath)) {
+                        const testMod = await import(mainPath)
+                        if (testMod.default?.name === name) {
+                          pkgDir = candidateDir
+                          found = true
+                          break
+                        }
+                      }
+                    } catch { /* skip */ }
+                  }
+                }
+                if (found) break
+              }
+            }
+
+            const pkgJsonPath = path.join(pkgDir, 'package.json')
+            const pkg = JSON.parse(await fs.promises.readFile(pkgJsonPath, 'utf-8'))
+            modulePath = path.join(pkgDir, pkg.main || 'dist/index.js')
+          }
+
+          log.debug({ plugin: name, modulePath }, 'Loading community plugin')
+          const mod = await import(modulePath)
+          const plugin = mod.default
+
+          if (!plugin || !plugin.name || !plugin.setup) {
+            log.warn({ plugin: name }, 'Community plugin has invalid exports (missing name or setup), skipping')
+            continue
+          }
+
+          communityPlugins.push(plugin)
+        } catch (err) {
+          log.warn({ err, plugin: name }, 'Failed to load community plugin, skipping')
+        }
+      }
+
+      if (communityPlugins.length > 0) {
+        log.debug({ plugins: communityPlugins.map(p => p.name) }, 'Booting community plugins')
+        await core.lifecycleManager.boot(communityPlugins)
+      }
+    } catch (err) {
+      log.warn({ err }, 'Community plugin loading failed')
+    }
+
     // Load dev plugin if running in dev mode
     if (opts?.devPluginPath) {
       const { DevPluginLoader } = await import('./core/plugin/dev-loader.js')
@@ -313,7 +400,6 @@ async function autoRegisterBuiltinPlugins(
     { name: '@openacp/tunnel', version: '1.0.0', description: 'Expose local services via tunnel' },
     { name: '@openacp/api-server', version: '1.0.0', description: 'REST API + SSE streaming server' },
     { name: '@openacp/telegram', version: '1.0.0', description: 'Telegram adapter with forum topics' },
-    { name: '@openacp/slack', version: '1.0.0', description: 'Slack adapter with channels and threads' },
   ]
 
   // Try to read legacy config for migration
@@ -338,7 +424,6 @@ async function autoRegisterBuiltinPlugins(
       import('./plugins/tunnel/index.js'),
       import('./plugins/api-server/index.js'),
       import('./plugins/telegram/index.js'),
-      import('./plugins/slack/index.js'),
     ])
 
     for (const result of pluginModules) {

@@ -184,7 +184,7 @@ async function configurePlugin(name: string): Promise<void> {
     process.exit(1)
   }
 
-  const basePath = path.join(os.homedir(), '.openacp', 'plugins')
+  const basePath = path.join(os.homedir(), '.openacp', 'plugins', 'data')
   const settingsManager = new SettingsManager(basePath)
   const ctx = createInstallContext({ pluginName: name, settingsManager, basePath })
 
@@ -200,7 +200,7 @@ async function configurePlugin(name: string): Promise<void> {
 async function installPlugin(input: string): Promise<void> {
   const os = await import('node:os')
   const path = await import('node:path')
-  const { execSync } = await import('node:child_process')
+  const { execFileSync } = await import('node:child_process')
   const { getCurrentVersion } = await import('../version.js')
   const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
   const { createInstallContext } = await import('../../core/plugin/install-context.js')
@@ -261,7 +261,7 @@ async function installPlugin(input: string): Promise<void> {
   const { corePlugins } = await import('../../plugins/core-plugins.js')
   const builtinPlugin = corePlugins.find(p => p.name === pkgName)
 
-  const basePath = path.join(os.homedir(), '.openacp', 'plugins')
+  const basePath = path.join(os.homedir(), '.openacp', 'plugins', 'data')
   const settingsManager = new SettingsManager(basePath)
   const registryPath = path.join(os.homedir(), '.openacp', 'plugins.json')
   const pluginRegistry = new PluginRegistry(registryPath)
@@ -291,7 +291,7 @@ async function installPlugin(input: string): Promise<void> {
   const nodeModulesDir = path.join(pluginsDir, 'node_modules')
 
   try {
-    execSync(`npm install ${installSpec} --prefix "${pluginsDir}" --save`, {
+    execFileSync('npm', ['install', installSpec, '--prefix', pluginsDir, '--save'], {
       stdio: 'inherit',
       timeout: 60000,
     })
@@ -302,8 +302,10 @@ async function installPlugin(input: string): Promise<void> {
 
   // Read installed plugin's package.json for compatibility check
   const cliVersion = getCurrentVersion()
+  const isLocalPath = pkgName.startsWith('/') || pkgName.startsWith('.')
   try {
-    const installedPkgPath = path.join(nodeModulesDir, pkgName, 'package.json')
+    const pluginRoot = isLocalPath ? path.resolve(pkgName) : path.join(nodeModulesDir, pkgName)
+    const installedPkgPath = path.join(pluginRoot, 'package.json')
     const { readFileSync } = await import('node:fs')
     const installedPkg = JSON.parse(readFileSync(installedPkgPath, 'utf-8'))
 
@@ -318,7 +320,7 @@ async function installPlugin(input: string): Promise<void> {
     }
 
     // Try to load and run install hook
-    const pluginModule = await import(path.join(nodeModulesDir, pkgName, installedPkg.main ?? 'dist/index.js'))
+    const pluginModule = await import(path.join(pluginRoot, installedPkg.main ?? 'dist/index.js'))
     const plugin = pluginModule.default
 
     if (plugin?.install) {
@@ -377,7 +379,7 @@ async function uninstallPlugin(name: string, purge: boolean): Promise<void> {
     if (plugin?.uninstall) {
       const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
       const { createInstallContext } = await import('../../core/plugin/install-context.js')
-      const basePath = path.join(os.homedir(), '.openacp', 'plugins')
+      const basePath = path.join(os.homedir(), '.openacp', 'plugins', 'data')
       const settingsManager = new SettingsManager(basePath)
       const ctx = createInstallContext({ pluginName: name, settingsManager, basePath })
       await plugin.uninstall(ctx, { purge })

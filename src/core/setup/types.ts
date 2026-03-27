@@ -34,3 +34,10 @@ export const CHANNEL_META: Record<string, { label: string; method: string }> = {
   discord: { label: "Discord", method: "Bot API" },
 };
 
+export interface CommunityAdapterOption {
+  name: string           // npm package name, e.g. "@openacp/adapter-slack"
+  displayName: string    // e.g. "Slack Adapter"
+  icon: string           // e.g. "💬"
+  verified: boolean
+}
+

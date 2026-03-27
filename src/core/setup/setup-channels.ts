@@ -57,33 +57,33 @@ async function promptConfiguredAction(label: string): Promise<ConfiguredChannelA
   );
 }
 
-async function configureViaPlugin(channelId: ChannelId): Promise<void> {
-  const pluginImports: Record<ChannelId, () => Promise<any>> = {
-    telegram: () => import('../../plugins/telegram/index.js'),
-    discord: async () => {
-      const pkg = '@openacp/adapter-discord';
-      try {
-        return await import(/* webpackIgnore: true */ pkg);
-      } catch {
-        throw new Error(
-          `${pkg} is not installed. Run: openacp plugin add ${pkg}`,
-        );
-      }
-    },
+async function configureViaPlugin(channelId: string): Promise<void> {
+  const pluginMap: Record<string, { importPath: string; name: string }> = {
+    telegram: { importPath: '../../plugins/telegram/index.js', name: '@openacp/telegram' },
   };
 
-  const importer = pluginImports[channelId];
-  if (!importer) return;
+  const pluginInfo = pluginMap[channelId];
 
-  const { SettingsManager } = await import('../plugin/settings-manager.js');
-  const { createInstallContext } = await import('../plugin/install-context.js');
-  const basePath = path.join(os.homedir(), '.openacp', 'plugins');
-  const settingsManager = new SettingsManager(basePath);
-
-  const pluginModule = await importer();
-  const plugin = pluginModule.default;
+  let plugin: any;
+  if (pluginInfo) {
+    const pluginModule = await import(pluginInfo.importPath);
+    plugin = pluginModule.default;
+  } else {
+    // Try dynamic import for community plugins (npm package name)
+    try {
+      const pluginModule = await import(channelId);
+      plugin = pluginModule.default;
+    } catch (err) {
+      console.log(`Could not load plugin "${channelId}": ${(err as Error).message}`);
+      return;
+    }
+  }
 
   if (plugin?.configure) {
+    const { SettingsManager } = await import('../plugin/settings-manager.js');
+    const { createInstallContext } = await import('../plugin/install-context.js');
+    const basePath = path.join(os.homedir(), '.openacp', 'plugins', 'data');
+    const settingsManager = new SettingsManager(basePath);
     const ctx = createInstallContext({
       pluginName: plugin.name,
       settingsManager,

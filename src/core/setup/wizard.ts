@@ -1,16 +1,39 @@
+import * as os from "node:os";
+import * as path from "node:path";
 import * as clack from "@clack/prompts";
 import type { Config, ConfigManager } from "../config/config.js";
 import type { ChannelId } from "./types.js";
 import type { OnboardSection } from "./types.js";
 import { ONBOARD_SECTION_OPTIONS } from "./types.js";
+import type { CommunityAdapterOption } from "./types.js";
 import { guardCancel, ok, fail, printStartBanner, summarizeConfig } from "./helpers.js";
 import { setupAgents } from "./setup-agents.js";
 import { setupWorkspace } from "./setup-workspace.js";
 import { setupRunMode } from "./setup-run-mode.js";
 import { setupIntegrations } from "./setup-integrations.js";
 import { configureChannels } from "./setup-channels.js";
+import { RegistryClient } from "../plugin/registry-client.js";
 import type { SettingsManager } from "../plugin/settings-manager.js";
 import type { PluginRegistry } from "../plugin/plugin-registry.js";
+
+// ─── Registry discovery ───
+
+async function fetchCommunityAdapters(): Promise<CommunityAdapterOption[]> {
+  try {
+    const client = new RegistryClient()
+    const registry = await client.getRegistry()
+    return registry.plugins
+      .filter(p => p.category === 'adapter' && p.verified)
+      .map(p => ({
+        name: p.npm,
+        displayName: p.displayName ?? p.name,
+        icon: p.icon,
+        verified: p.verified,
+      }))
+  } catch {
+    return []
+  }
+}
 
 // ─── First-run setup ───
 
@@ -29,18 +52,31 @@ export async function runSetup(
       return false;
     }
 
+    const communityAdapters = await fetchCommunityAdapters()
+
+    const builtInOptions = [
+      { label: 'Telegram', value: 'telegram' },
+    ]
+
+    const communityOptions = communityAdapters.map(a => ({
+      label: `${a.icon} ${a.displayName}${a.verified ? ' (verified)' : ''}`,
+      value: `community:${a.name}`,
+    }))
+
     // Ask user which channels to set up
     const channelChoices = guardCancel(
       await clack.multiselect({
         message: 'Which channels do you want to set up?',
         options: [
-          { value: 'telegram' as const, label: 'Telegram', hint: 'built-in' },
-          { value: 'discord' as const, label: 'Discord', hint: 'will install @openacp/adapter-discord' },
+          ...builtInOptions.map(o => ({ value: o.value, label: o.label, hint: 'built-in' })),
+          ...(communityOptions.length > 0
+            ? communityOptions.map(o => ({ value: o.value, label: o.label, hint: 'from plugin registry' }))
+            : []),
         ],
         required: true,
         initialValues: ['telegram' as const],
       }),
-    ) as ChannelId[];
+    ) as string[];
 
     // Calculate total steps dynamically: channel(s) + workspace + run mode
     const channelSteps = channelChoices.length;
@@ -71,8 +107,59 @@ export async function runSetup(
         });
       }
 
-      if (channelId === 'discord') {
-        await installAndSetupDiscord(settingsManager, pluginRegistry);
+
+      // Handle community plugin selections
+      if (channelId.startsWith('community:')) {
+        const npmPackage = channelId.slice('community:'.length);
+        const { execFileSync } = await import('node:child_process');
+        const pluginsDir = path.join(os.homedir(), '.openacp', 'plugins');
+        const nodeModulesDir = path.join(pluginsDir, 'node_modules');
+
+        // Install from npm
+        try {
+          execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save'], {
+            stdio: 'inherit',
+            timeout: 60000,
+          });
+        } catch {
+          console.log(fail(`Failed to install ${npmPackage}.`));
+          return false;
+        }
+
+        // Load and run install hook
+        try {
+          const { readFileSync } = await import('node:fs');
+          const installedPkgPath = path.join(nodeModulesDir, npmPackage, 'package.json');
+          const installedPkg = JSON.parse(readFileSync(installedPkgPath, 'utf-8'));
+          const pluginModule = await import(path.join(nodeModulesDir, npmPackage, installedPkg.main ?? 'dist/index.js'));
+          const plugin = pluginModule.default;
+
+          if (plugin?.install) {
+            const installCtx = createInstallContext({
+              pluginName: plugin.name ?? npmPackage,
+              settingsManager,
+              basePath: settingsManager.getBasePath(),
+            });
+            await plugin.install(installCtx);
+          }
+
+          pluginRegistry.register(plugin?.name ?? npmPackage, {
+            version: installedPkg.version,
+            source: 'npm',
+            enabled: true,
+            settingsPath: settingsManager.getSettingsPath(plugin?.name ?? npmPackage),
+            description: plugin?.description ?? installedPkg.description,
+          });
+        } catch (err) {
+          // Plugin installed via npm but failed to load — register as disabled
+          console.log(fail(`Failed to load ${npmPackage}: ${(err as Error).message}`));
+          pluginRegistry.register(npmPackage, {
+            version: 'unknown',
+            source: 'npm',
+            enabled: false,
+            settingsPath: settingsManager.getSettingsPath(npmPackage),
+          });
+        }
       }
     }
 
@@ -171,57 +258,6 @@ export async function runSetup(
     }
     throw err;
   }
-}
-
-/**
- * Install @openacp/adapter-discord from npm if needed, then run its install() hook.
- */
-async function installAndSetupDiscord(
-  settingsManager: SettingsManager,
-  pluginRegistry: PluginRegistry,
-): Promise<void> {
-  const packageName = '@openacp/adapter-discord';
-
-  // Try to import first — if not installed, install it
-  let discordPlugin: any;
-  const pluginsDir = settingsManager.getBasePath();
-  try {
-    const { importFromDir } = await import('../plugin/plugin-installer.js');
-    const mod = await importFromDir(packageName, pluginsDir);
-    discordPlugin = mod.default;
-  } catch {
-    const spinner = clack.spinner();
-    spinner.start(`Installing ${packageName}...`);
-    try {
-      const { installNpmPlugin } = await import('../plugin/plugin-installer.js');
-      const mod = await installNpmPlugin(packageName, pluginsDir);
-      discordPlugin = mod.default;
-      spinner.stop(ok(`${packageName} installed`));
-    } catch (installErr) {
-      spinner.stop(fail(`Failed to install ${packageName}: ${(installErr as Error).message}`));
-      console.log(fail('You can install it later with: openacp plugin add @openacp/adapter-discord'));
-      return;
-    }
-  }
-
-  const { createInstallContext } = await import('../plugin/install-context.js');
-  const ctx = createInstallContext({
-    pluginName: discordPlugin.name,
-    settingsManager,
-    basePath: settingsManager.getBasePath(),
-  });
-
-  if (discordPlugin.install) {
-    await discordPlugin.install(ctx);
-  }
-
-  pluginRegistry.register(discordPlugin.name, {
-    version: discordPlugin.version,
-    source: 'npm',
-    enabled: true,
-    settingsPath: settingsManager.getSettingsPath(discordPlugin.name),
-    description: discordPlugin.description,
-  });
 }
 
 /**

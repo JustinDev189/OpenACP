@@ -11,7 +11,6 @@ import notificationsPlugin from './notifications/index.js'
 import tunnelPlugin from './tunnel/index.js'
 import apiServerPlugin from './api-server/index.js'
 import telegramPlugin from './telegram/index.js'
-import slackPlugin from './slack/index.js'
 
 export const corePlugins = [
   // Service plugins (no adapter dependencies)
@@ -25,5 +24,4 @@ export const corePlugins = [
   apiServerPlugin,
   // Adapter plugins (depend on security, notifications, etc.)
   telegramPlugin,
-  slackPlugin,
 ]

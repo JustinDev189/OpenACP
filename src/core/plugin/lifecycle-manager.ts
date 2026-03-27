@@ -209,11 +209,14 @@ export class LifecycleManager {
       let pluginConfig: Record<string, unknown>
       if (this.settingsManager) {
         pluginConfig = await this.settingsManager.loadSettings(plugin.name)
+        const settingsPath = this.settingsManager.getSettingsPath(plugin.name)
+        this.getPluginLogger(plugin.name).debug(`Settings loaded from ${settingsPath}: ${Object.keys(pluginConfig).length} keys`)
         if (Object.keys(pluginConfig).length === 0) {
           pluginConfig = resolvePluginConfig(plugin.name, this.config)
         }
       } else {
         pluginConfig = resolvePluginConfig(plugin.name, this.config)
+        this.getPluginLogger(plugin.name).debug('No settingsManager, using legacy config')
       }
 
       // Create context for this plugin
