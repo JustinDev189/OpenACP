@@ -14,7 +14,7 @@ import {
   generatePluginTest,
   generateClaudeMd,
   generatePluginGuide,
-} from '../templates/index.js'
+} from '../plugin-template/index.js'
 
 export async function cmdPluginCreate(): Promise<void> {
   p.intro('Create a new OpenACP plugin')
