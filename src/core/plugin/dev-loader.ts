@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import type { OpenACPPlugin } from './types.js'
 
 let loadCounter = 0
@@ -24,30 +23,18 @@ export class DevPluginLoader {
       throw new Error(`Built plugin not found at ${distIndex}. Run 'npm run build' first.`)
     }
 
-    // Node.js caches ESM imports by URL. To support reloading, copy the file
-    // to a unique temp path so each load() gets a fresh module.
-    const tmpDir = path.join(os.tmpdir(), 'openacp-dev-loader')
-    fs.mkdirSync(tmpDir, { recursive: true })
-    const tmpFile = path.join(tmpDir, `plugin-${Date.now()}-${++loadCounter}.mjs`)
-    fs.copyFileSync(distIndex, tmpFile)
+    // Node.js caches ESM imports by URL. Use a unique query string to bust
+    // the cache on each reload while keeping the file in its original directory
+    // so that relative imports (e.g., './adapter.js') still resolve correctly.
+    const cacheBuster = `v=${Date.now()}-${++loadCounter}`
+    const mod = await import(`file://${distIndex}?${cacheBuster}`)
+    const plugin = mod.default as OpenACPPlugin
 
-    try {
-      const mod = await import(`file://${tmpFile}`)
-      const plugin = mod.default as OpenACPPlugin
-
-      if (!plugin || !plugin.name || !plugin.setup) {
-        throw new Error(`Invalid plugin at ${distIndex}. Must export default OpenACPPlugin with name and setup().`)
-      }
-
-      return plugin
-    } finally {
-      // Clean up temp file
-      try {
-        fs.unlinkSync(tmpFile)
-      } catch {
-        // Ignore cleanup errors
-      }
+    if (!plugin || !plugin.name || !plugin.setup) {
+      throw new Error(`Invalid plugin at ${distIndex}. Must export default OpenACPPlugin with name and setup().`)
     }
+
+    return plugin
   }
 
   getPluginPath(): string {

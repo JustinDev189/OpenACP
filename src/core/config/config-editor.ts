@@ -1,3 +1,5 @@
+import * as os from 'node:os'
+import * as path from 'node:path'
 import * as clack from '@clack/prompts'
 import type { Config, ConfigManager } from './config.js'
 
@@ -26,8 +28,6 @@ async function input(opts: { message: string; default?: string; validate?: (val:
   if (clack.isCancel(result)) { clack.cancel('Cancelled.'); process.exit(0) }
   return result as string
 }
-// Validators are lazy-loaded from plugins to avoid static core→plugin dependencies
-// They're only needed when user edits specific config sections
 import { installAutoStart, uninstallAutoStart, isAutoStartInstalled, isAutoStartSupported } from '../../cli/autostart.js'
 import { expandHome } from './config.js'
 
@@ -162,151 +162,56 @@ async function editTelegram(config: Config, updates: ConfigUpdates): Promise<voi
   }
 }
 
-// --- Edit: Discord ---
+// --- Edit: Discord (delegates to plugin's configure()) ---
 
-async function validateDiscordGuild(
-  token: string,
-  guildId: string,
-): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+const DISCORD_PACKAGE = '@openacp/adapter-discord'
+
+async function ensureDiscordPlugin(): Promise<any | null> {
   try {
-    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
-      headers: { Authorization: `Bot ${token}` },
+    return await import(DISCORD_PACKAGE)
+  } catch {
+    const shouldInstall = await select({
+      message: `${DISCORD_PACKAGE} is not installed. Install it now?`,
+      choices: [
+        { name: 'Yes, install now', value: 'yes' },
+        { name: 'No, skip', value: 'no' },
+      ],
     })
-    if (res.status === 200) {
-      const data = (await res.json()) as { name: string }
-      return { ok: true, name: data.name }
+    if (shouldInstall === 'no') {
+      console.log(warn(`Install later with: openacp plugin add ${DISCORD_PACKAGE}`))
+      return null
     }
-    if (res.status === 403) {
-      return { ok: false, error: 'Bot is not a member of this server. Invite the bot first.' }
+    try {
+      console.log(dim(`Installing ${DISCORD_PACKAGE}...`))
+      const { installNpmPlugin } = await import('../plugin/plugin-installer.js')
+      const mod = await installNpmPlugin(DISCORD_PACKAGE)
+      console.log(ok(`${DISCORD_PACKAGE} installed`))
+      return mod
+    } catch (err) {
+      console.log(warn(`Failed to install: ${(err as Error).message}`))
+      return null
     }
-    return { ok: false, error: `Discord API returned ${res.status}` }
-  } catch (err) {
-    return { ok: false, error: (err as Error).message }
   }
 }
 
-async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void> {
-  const dc = (config.channels?.discord ?? {}) as Record<string, unknown>
-  const currentToken = (dc.botToken as string) ?? ''
-  const currentGuildId = (dc.guildId as string) ?? ''
-  const currentEnabled = (dc.enabled as boolean) ?? false
+async function editDiscord(_config: Config, _updates: ConfigUpdates): Promise<void> {
+  const pluginModule = await ensureDiscordPlugin()
+  if (!pluginModule) return
 
-  console.log(header('Discord'))
-  console.log(`  Enabled   : ${currentEnabled ? ok('yes') : dim('no')}`)
-  const tokenDisplay = currentToken.length > 12
-    ? currentToken.slice(0, 6) + '...' + currentToken.slice(-6)
-    : currentToken || dim('(not set)')
-  console.log(`  Bot Token : ${tokenDisplay}`)
-  console.log(`  Guild ID  : ${currentGuildId || dim('(not set)')}`)
-  console.log('')
-
-  // Helper to ensure discord updates object exists
-  const ensureDiscordUpdates = () => {
-    if (!updates.channels) updates.channels = {}
-    if (!(updates.channels as Record<string, unknown>).discord) {
-      (updates.channels as Record<string, unknown>).discord = {}
-    }
-    return (updates.channels as Record<string, unknown>).discord as Record<string, unknown>
-  }
-
-  while (true) {
-    const isEnabled = (() => {
-      const ch = updates.channels as Record<string, unknown> | undefined
-      const dcUp = ch?.discord as Record<string, unknown> | undefined
-      if (dcUp && 'enabled' in dcUp) return dcUp.enabled as boolean
-      return currentEnabled
-    })()
-
-    const choice = await select({
-      message: 'Discord settings:',
-      choices: [
-        { name: isEnabled ? 'Disable Discord' : 'Enable Discord', value: 'toggle' },
-        { name: 'Configure Bot Token & Server', value: 'setup' },
-        { name: 'Back', value: 'back' },
-      ],
+  const plugin = pluginModule.default
+  if (plugin?.configure) {
+    const { SettingsManager } = await import('../plugin/settings-manager.js')
+    const { createInstallContext } = await import('../plugin/install-context.js')
+    const basePath = path.join(os.homedir(), '.openacp', 'plugins')
+    const settingsManager = new SettingsManager(basePath)
+    const ctx = createInstallContext({
+      pluginName: plugin.name,
+      settingsManager,
+      basePath,
     })
-
-    if (choice === 'back') break
-
-    if (choice === 'toggle') {
-      const dcUp = ensureDiscordUpdates()
-      dcUp.enabled = !isEnabled
-      console.log(!isEnabled ? ok('Discord enabled') : ok('Discord disabled'))
-    }
-
-    if (choice === 'setup') {
-      // Step 1: Bot Token
-      const token = await input({
-        message: 'Bot token:',
-        default: currentToken,
-        validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
-      })
-
-      let tokenValid = true
-      try {
-        const { validateDiscordToken } = await import('../../plugins/discord/validators.js')
-        const tokenResult = await validateDiscordToken(token.trim())
-        if (tokenResult.ok) {
-          console.log(ok(`Connected as @${tokenResult.username}`))
-        } else {
-          console.log(warn(`Token validation failed: ${tokenResult.error}`))
-          tokenValid = false
-        }
-      } catch {
-        console.log(warn('Discord validator not available — skipping validation'))
-      }
-      if (!tokenValid) {
-        const action = await select({
-          message: 'What to do?',
-          choices: [
-            { name: 'Continue anyway', value: 'continue' },
-            { name: 'Cancel', value: 'cancel' },
-          ],
-        })
-        if (action === 'cancel') continue
-      }
-
-      // Step 2: Guild ID
-      const guildIdStr = await input({
-        message: 'Guild (server) ID:',
-        default: currentGuildId,
-        validate: (val) => {
-          const trimmed = val.trim()
-          if (!trimmed) return 'Guild ID cannot be empty'
-          if (!/^\d{17,20}$/.test(trimmed)) return 'Guild ID must be a numeric Discord snowflake (17-20 digits)'
-          return true
-        },
-      })
-
-      // Step 3: Validate guild with the token
-      const validToken = token.trim()
-      const validGuildId = guildIdStr.trim()
-      const guildResult = await validateDiscordGuild(validToken, validGuildId)
-      if (guildResult.ok) {
-        console.log(ok(`Server: ${guildResult.name}`))
-      } else {
-        console.log(warn(`Guild validation failed: ${guildResult.error}`))
-        const action = await select({
-          message: 'What to do?',
-          choices: [
-            { name: 'Save anyway', value: 'continue' },
-            { name: 'Cancel', value: 'cancel' },
-          ],
-        })
-        if (action === 'cancel') continue
-      }
-
-      // Step 4: Save both + auto-enable
-      const dcUp = ensureDiscordUpdates()
-      dcUp.botToken = validToken
-      dcUp.guildId = validGuildId
-      dcUp.enabled = true
-      // Clear old channel IDs so they get recreated on next start
-      dcUp.forumChannelId = null
-      dcUp.notificationChannelId = null
-      dcUp.assistantThreadId = null
-      console.log(ok('Discord configured and enabled'))
-    }
+    await plugin.configure(ctx)
+  } else {
+    console.log(warn('This plugin does not have a configure() method yet.'))
   }
 }
 

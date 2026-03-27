@@ -7,7 +7,7 @@ export type OnboardSection =
 
 export type ConfiguredChannelAction = "modify" | "disable" | "delete" | "skip";
 
-export type ChannelId = "telegram" | "discord";
+export type ChannelId = string;
 
 export type ChannelStatus = {
   id: ChannelId;
@@ -29,7 +29,7 @@ export const ONBOARD_SECTION_OPTIONS: Array<{
   { value: "integrations", label: "Integrations", hint: "Claude CLI session transfer" },
 ];
 
-export const CHANNEL_META: Record<ChannelId, { label: string; method: string }> = {
+export const CHANNEL_META: Record<string, { label: string; method: string }> = {
   telegram: { label: "Telegram", method: "Bot API" },
   discord: { label: "Discord", method: "Bot API" },
 };

@@ -100,8 +100,14 @@ export { EntireProvider } from "../plugins/context/entire/entire-provider.js";
 
 // ─── Adapter primitives ─────────────────────────────────────────────────────
 export { MessagingAdapter, StreamAdapter } from './adapter-primitives/index.js'
+export type { MessagingAdapterConfig } from './adapter-primitives/index.js'
 export { BaseRenderer } from './adapter-primitives/index.js'
+export type { IRenderer, RenderedMessage } from './adapter-primitives/index.js'
 export { SendQueue, DraftManager, ToolCallTracker, ActivityTracker } from './adapter-primitives/index.js'
+export type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta, ViewerLinks } from './adapter-primitives/index.js'
+export { STATUS_ICONS, KIND_ICONS } from './adapter-primitives/index.js'
+export { progressBar, formatTokens, truncateContent, stripCodeFences, splitMessage } from './adapter-primitives/index.js'
+export { extractContentText, formatToolSummary, formatToolTitle, resolveToolIcon } from './adapter-primitives/index.js'
 
 // ─── Plugin types (for SDK re-exports) ──────────────────────────────────────
 export type {
@@ -111,3 +117,7 @@ export type {
   SecurityService, NotificationService, UsageService,
   SpeechServiceInterface, TunnelServiceInterface, ContextService,
 } from './plugin/types.js'
+export { CommandRegistry } from './command-registry.js'
+export { DoctorEngine } from './doctor/index.js'
+export type { DoctorReport, PendingFix } from './doctor/types.js'
+export { PRODUCT_GUIDE } from '../data/product-guide.js'

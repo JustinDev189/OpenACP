@@ -9,7 +9,6 @@ export {
   validateChatId,
   validateBotAdmin,
 } from "../../plugins/telegram/validators.js";
-export { validateDiscordToken } from "../../plugins/discord/validators.js";
 
 // Agent detection (used by tests)
 export { detectAgents, validateAgentCommand } from "./setup-agents.js";

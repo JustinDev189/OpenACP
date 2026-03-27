@@ -58,20 +58,29 @@ async function promptConfiguredAction(label: string): Promise<ConfiguredChannelA
 }
 
 async function configureViaPlugin(channelId: ChannelId): Promise<void> {
-  const pluginMap: Record<ChannelId, { importPath: string; name: string }> = {
-    telegram: { importPath: '../../plugins/telegram/index.js', name: '@openacp/telegram' },
-    discord: { importPath: '../../plugins/discord/index.js', name: '@openacp/discord' },
+  const pluginImports: Record<ChannelId, () => Promise<any>> = {
+    telegram: () => import('../../plugins/telegram/index.js'),
+    discord: async () => {
+      const pkg = '@openacp/adapter-discord';
+      try {
+        return await import(/* webpackIgnore: true */ pkg);
+      } catch {
+        throw new Error(
+          `${pkg} is not installed. Run: openacp plugin add ${pkg}`,
+        );
+      }
+    },
   };
 
-  const pluginInfo = pluginMap[channelId];
-  if (!pluginInfo) return;
+  const importer = pluginImports[channelId];
+  if (!importer) return;
 
   const { SettingsManager } = await import('../plugin/settings-manager.js');
   const { createInstallContext } = await import('../plugin/install-context.js');
   const basePath = path.join(os.homedir(), '.openacp', 'plugins');
   const settingsManager = new SettingsManager(basePath);
 
-  const pluginModule = await import(pluginInfo.importPath);
+  const pluginModule = await importer();
   const plugin = pluginModule.default;
 
   if (plugin?.configure) {

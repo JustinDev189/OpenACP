@@ -7,7 +7,6 @@ import { ConfigManager, expandHome } from "../config/config.js";
 import { configCheck } from "./checks/config.js";
 import { agentsCheck } from "./checks/agents.js";
 import { telegramCheck } from "./checks/telegram.js";
-import { discordCheck } from "./checks/discord.js";
 import { storageCheck } from "./checks/storage.js";
 import { workspaceCheck } from "./checks/workspace.js";
 import { pluginsCheck } from "./checks/plugins.js";
@@ -18,7 +17,6 @@ const ALL_CHECKS: DoctorCheck[] = [
   configCheck,
   agentsCheck,
   telegramCheck,
-  discordCheck,
   storageCheck,
   workspaceCheck,
   pluginsCheck,

@@ -28,7 +28,8 @@ function resolvePluginConfig(pluginName: string, configManager: unknown): Record
     if (pluginEntry?.config && Object.keys(pluginEntry.config).length > 0) {
       return pluginEntry.config
     }
-    // Fallback to legacy config sections
+    // @deprecated Legacy config path mapping — kept for backward compat with pre-plugin configs.
+    // New plugins should use plugins.builtin['<name>'].config format. Remove when all users have migrated.
     const legacyMap: Record<string, string> = {
       '@openacp/security': 'security',
       '@openacp/speech': 'speech',
@@ -38,6 +39,8 @@ function resolvePluginConfig(pluginName: string, configManager: unknown): Record
       '@openacp/api-server': 'api',
       '@openacp/telegram': 'channels.telegram',
       '@openacp/discord': 'channels.discord',
+      '@openacp/adapter-discord': 'channels.discord',
+      '@openacp/plugin-discord': 'channels.discord', // alias for old name
       '@openacp/slack': 'channels.slack',
     }
     const legacyKey = legacyMap[pluginName]
@@ -127,9 +130,14 @@ export class LifecycleManager {
     // Resolve load order via topological sort.
     // resolveLoadOrder will skip plugins whose dependencies are missing entirely
     // (not present in the input list). But we also need to handle runtime setup failures.
+    // Include already-loaded plugins so dependency checks pass for late-booted plugins
+    // (e.g., dev plugins booted after core plugins).
+    const newNames = new Set(plugins.map(p => p.name))
+    const allForResolution = [...this.loadOrder.filter(p => !newNames.has(p.name)), ...plugins]
+
     let sorted: OpenACPPlugin[]
     try {
-      sorted = resolveLoadOrder(plugins)
+      sorted = resolveLoadOrder(allForResolution)
     } catch (err) {
       // Circular dependency or other fatal error in resolution
       // Mark all as failed
@@ -138,6 +146,9 @@ export class LifecycleManager {
       }
       return
     }
+
+    // Only boot new plugins (already-loaded ones were included just for dependency resolution)
+    sorted = sorted.filter(p => newNames.has(p.name))
 
     // Append to existing loadOrder (don't overwrite — hot-reload boots single plugins)
     for (const p of sorted) {

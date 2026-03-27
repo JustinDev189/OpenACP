@@ -39,7 +39,6 @@ src/
     setup/            — First-run setup wizard
   plugins/            — All plugins (adapters + services)
     telegram/         — Telegram adapter (grammY)
-    discord/          — Discord adapter (discord.js)
     slack/            — Slack adapter (@slack/bolt)
     speech/           — TTS/STT (Edge TTS, Groq STT)
     tunnel/           — Port forwarding (Cloudflare, ngrok, Bore, Tailscale)

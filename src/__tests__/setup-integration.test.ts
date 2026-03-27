@@ -88,6 +88,7 @@ import { runSetup, runReconfigure } from '../core/setup/index.js'
 const mockedText = vi.mocked(clack.text)
 const mockedSelect = vi.mocked(clack.select)
 const mockedConfirm = vi.mocked(clack.confirm)
+const mockedMultiselect = vi.mocked(clack.multiselect)
 
 describe('runSetup integration', () => {
   let tmpDir: string
@@ -170,10 +171,11 @@ describe('runSetup integration', () => {
     // 1. Claude CLI integration prompt (decline to avoid needing ClaudeIntegration mock)
     mockedConfirm.mockResolvedValueOnce(false as any)
 
+    // Multiselect: channel selection (Telegram only)
+    mockedMultiselect.mockResolvedValueOnce(['telegram'] as any)
+
     // Select call order:
-    // 1. Channel selection: which platform
-    // 2. setupRunMode: run mode selection
-    mockedSelect.mockResolvedValueOnce('telegram' as any)
+    // 1. setupRunMode: run mode selection
     mockedSelect.mockResolvedValueOnce('foreground' as any)
 
     // Create mock settingsManager and pluginRegistry

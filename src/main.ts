@@ -167,9 +167,11 @@ export async function startServer(opts?: StartServerOptions) {
       }
     }
 
-    // Wire adapters from service registry into core
-    for (const adapterName of ['telegram', 'discord', 'slack']) {
-      const adapter = serviceRegistry.get<IChannelAdapter>(`adapter:${adapterName}`)
+    // Wire adapters from service registry into core (discovered dynamically)
+    for (const { name } of serviceRegistry.list()) {
+      if (!name.startsWith('adapter:')) continue
+      const adapterName = name.slice('adapter:'.length)
+      const adapter = serviceRegistry.get<IChannelAdapter>(name)
       if (adapter) {
         core.registerAdapter(adapterName, adapter)
         log.info({ adapter: adapterName }, 'Adapter registered')
@@ -311,7 +313,6 @@ async function autoRegisterBuiltinPlugins(
     { name: '@openacp/tunnel', version: '1.0.0', description: 'Expose local services via tunnel' },
     { name: '@openacp/api-server', version: '1.0.0', description: 'REST API + SSE streaming server' },
     { name: '@openacp/telegram', version: '1.0.0', description: 'Telegram adapter with forum topics' },
-    { name: '@openacp/discord', version: '1.0.0', description: 'Discord adapter with forum threads' },
     { name: '@openacp/slack', version: '1.0.0', description: 'Slack adapter with channels and threads' },
   ]
 
@@ -337,7 +338,6 @@ async function autoRegisterBuiltinPlugins(
       import('./plugins/tunnel/index.js'),
       import('./plugins/api-server/index.js'),
       import('./plugins/telegram/index.js'),
-      import('./plugins/discord/index.js'),
       import('./plugins/slack/index.js'),
     ])
 
