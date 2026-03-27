@@ -114,6 +114,7 @@ When changing code, **you must update corresponding docs** to keep code and docu
 
 ## Conventions
 
+- **English only**: All code, comments, commit messages, documentation, specs, plans, and any text in the repository must be written in English. No exceptions.
 - ESM-only (`"type": "module"`), all imports use `.js` extension
 - TypeScript strict mode, target ES2022, NodeNext module resolution
 
