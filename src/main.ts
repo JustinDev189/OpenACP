@@ -313,7 +313,6 @@ async function autoRegisterBuiltinPlugins(
     { name: '@openacp/tunnel', version: '1.0.0', description: 'Expose local services via tunnel' },
     { name: '@openacp/api-server', version: '1.0.0', description: 'REST API + SSE streaming server' },
     { name: '@openacp/telegram', version: '1.0.0', description: 'Telegram adapter with forum topics' },
-    { name: '@openacp/slack', version: '1.0.0', description: 'Slack adapter with channels and threads' },
   ]
 
   // Try to read legacy config for migration
@@ -338,7 +337,6 @@ async function autoRegisterBuiltinPlugins(
       import('./plugins/tunnel/index.js'),
       import('./plugins/api-server/index.js'),
       import('./plugins/telegram/index.js'),
-      import('./plugins/slack/index.js'),
     ])
 
     for (const result of pluginModules) {
