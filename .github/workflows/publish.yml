@@ -50,39 +50,3 @@ jobs:
         run: npm publish --access=public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Update plugin registry
-        env:
-          GH_TOKEN: ${{ secrets.REGISTRY_PAT }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "REGISTRY_PAT not set, skipping registry update"
-            exit 0
-          fi
-
-          # Clone registry repo
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/Open-ACP/plugin-registry.git" /tmp/plugin-registry
-          cd /tmp/plugin-registry
-
-          # Update version in all built-in plugin entries
-          for f in plugins/openacp--*.json; do
-            if [ -f "$f" ]; then
-              node -e "
-                const fs = require('fs');
-                const p = JSON.parse(fs.readFileSync('$f', 'utf-8'));
-                p.version = '$VERSION';
-                fs.writeFileSync('$f', JSON.stringify(p, null, 2) + '\n');
-              "
-            fi
-          done
-
-          # Rebuild registry.json + README
-          npm ci
-          npx tsx scripts/build-registry.ts
-
-          # Commit and push if changed
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --staged --quiet || git commit -m "chore: update built-in plugins to v${VERSION}"
-          git push
