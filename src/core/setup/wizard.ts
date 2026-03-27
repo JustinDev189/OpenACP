@@ -150,12 +150,13 @@ export async function runSetup(
             settingsPath: settingsManager.getSettingsPath(plugin?.name ?? npmPackage),
             description: plugin?.description ?? installedPkg.description,
           });
-        } catch {
-          // Plugin installed via npm but failed to load — still register
+        } catch (err) {
+          // Plugin installed via npm but failed to load — register as disabled
+          console.log(fail(`Failed to load ${npmPackage}: ${(err as Error).message}`));
           pluginRegistry.register(npmPackage, {
             version: 'unknown',
             source: 'npm',
-            enabled: true,
+            enabled: false,
             settingsPath: settingsManager.getSettingsPath(npmPackage),
           });
         }
