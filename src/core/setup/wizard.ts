@@ -163,6 +163,9 @@ export async function runSetup(
       }
     }
 
+    // Persist any community plugin registrations from the loop above
+    await pluginRegistry.save();
+
     const { defaultAgent } = await setupAgents();
 
     // Offer Claude CLI integration

@@ -153,7 +153,7 @@ export async function startServer(opts?: StartServerOptions) {
 
             if (!fs.existsSync(path.join(pkgDir, 'package.json'))) {
               // Plugin name doesn't match npm package name — scan installed packages
-              // Only consider packages that are actual OpenACP plugins (by keywords or scope)
+              // Match by openacp.pluginName field in package.json (no code execution)
               let found = false
               const scopes = fs.readdirSync(nodeModulesDir).filter(d => d.startsWith('@'))
               for (const scope of scopes) {
@@ -165,19 +165,11 @@ export async function startServer(opts?: StartServerOptions) {
                   if (fs.existsSync(candidatePkgPath)) {
                     try {
                       const candidatePkg = JSON.parse(fs.readFileSync(candidatePkgPath, 'utf-8'))
-                      const npmName = candidatePkg.name as string | undefined
-                      const keywords = Array.isArray(candidatePkg.keywords) ? candidatePkg.keywords as string[] : []
-                      const isOpenACPPlugin = npmName?.startsWith('@openacp/') || keywords.includes('openacp-plugin')
-                      if (!isOpenACPPlugin) continue
-
-                      const mainPath = path.join(candidateDir, candidatePkg.main || 'dist/index.js')
-                      if (fs.existsSync(mainPath)) {
-                        const testMod = await import(mainPath)
-                        if (testMod.default?.name === name) {
-                          pkgDir = candidateDir
-                          found = true
-                          break
-                        }
+                      const pluginName = candidatePkg.openacp?.pluginName as string | undefined
+                      if (pluginName === name) {
+                        pkgDir = candidateDir
+                        found = true
+                        break
                       }
                     } catch { /* skip */ }
                   }
