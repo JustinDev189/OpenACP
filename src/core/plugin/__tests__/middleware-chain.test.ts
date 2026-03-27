@@ -243,4 +243,49 @@ describe('MiddlewareChain', () => {
     expect(badHandler).not.toHaveBeenCalled()
     expect(coreHandler).toHaveBeenCalled()
   })
+
+  it('handlers added out of priority order are still executed in priority order', async () => {
+    const order: string[] = []
+
+    // Register in reverse priority order
+    chain.add('test:hook', 'plugin-c', {
+      priority: 300,
+      handler: async (_p: unknown, next: NextFn) => { order.push('c'); return next() },
+    })
+    chain.add('test:hook', 'plugin-a', {
+      priority: 100,
+      handler: async (_p: unknown, next: NextFn) => { order.push('a'); return next() },
+    })
+    chain.add('test:hook', 'plugin-b', {
+      priority: 200,
+      handler: async (_p: unknown, next: NextFn) => { order.push('b'); return next() },
+    })
+
+    await chain.execute('test:hook', {}, (p) => p)
+
+    expect(order).toEqual(['a', 'b', 'c'])
+  })
+
+  it('adding handler to existing hook re-sorts all handlers', async () => {
+    const order: string[] = []
+
+    chain.add('test:hook', 'plugin-b', {
+      priority: 200,
+      handler: async (_p: unknown, next: NextFn) => { order.push('b'); return next() },
+    })
+
+    await chain.execute('test:hook', {}, (p) => p)
+    expect(order).toEqual(['b'])
+
+    order.length = 0
+
+    // Add higher-priority handler after initial registration
+    chain.add('test:hook', 'plugin-a', {
+      priority: 50,
+      handler: async (_p: unknown, next: NextFn) => { order.push('a'); return next() },
+    })
+
+    await chain.execute('test:hook', {}, (p) => p)
+    expect(order).toEqual(['a', 'b'])
+  })
 })

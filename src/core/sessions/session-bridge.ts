@@ -93,17 +93,25 @@ export class SessionBridge {
       if (mw) {
         mw.execute('agent:beforeEvent', { sessionId: this.session.id, event }, async (e) => e).then((result) => {
           if (!result) return; // blocked by middleware
-          const transformedEvent = result.event;
-          const outgoing = this.handleAgentEvent(transformedEvent);
-          // Hook: agent:afterEvent — read-only, fire-and-forget
-          mw.execute('agent:afterEvent', {
-            sessionId: this.session.id,
-            event: transformedEvent,
-            outgoingMessage: outgoing ?? { type: 'text' as const, text: '' },
-          }, async (e) => e).catch(() => {});
+          try {
+            const transformedEvent = result.event;
+            const outgoing = this.handleAgentEvent(transformedEvent);
+            // Hook: agent:afterEvent — read-only, fire-and-forget
+            mw.execute('agent:afterEvent', {
+              sessionId: this.session.id,
+              event: transformedEvent,
+              outgoingMessage: outgoing ?? { type: 'text' as const, text: '' },
+            }, async (e) => e).catch(() => {});
+          } catch (err) {
+            log.error({ err, sessionId: this.session.id }, "Error handling agent event after middleware");
+          }
         }).catch(() => {
           // Middleware error — proceed with original event
-          this.handleAgentEvent(event);
+          try {
+            this.handleAgentEvent(event);
+          } catch (err) {
+            log.error({ err, sessionId: this.session.id }, "Error handling agent event (middleware fallback)");
+          }
         });
       } else {
         this.handleAgentEvent(event);

@@ -96,4 +96,32 @@ describe('NotificationManager', () => {
       expect(adapter.sendNotification).toHaveBeenCalledTimes(1)
     })
   })
+
+  describe('error resilience', () => {
+    it('notify() does not throw when adapter.sendNotification fails', async () => {
+      const adapter = mockAdapter()
+      ;(adapter.sendNotification as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network error'))
+      const adapters = new Map([['telegram', adapter]])
+      const manager = new NotificationManager(adapters)
+
+      // Should not throw
+      await manager.notify('telegram', notification)
+    })
+
+    it('notifyAll() continues to next adapter when one fails', async () => {
+      const failing = mockAdapter()
+      ;(failing.sendNotification as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network error'))
+      const working = mockAdapter()
+      const adapters = new Map([
+        ['telegram', failing],
+        ['discord', working],
+      ])
+      const manager = new NotificationManager(adapters)
+
+      await manager.notifyAll(notification)
+
+      expect(failing.sendNotification).toHaveBeenCalledWith(notification)
+      expect(working.sendNotification).toHaveBeenCalledWith(notification)
+    })
+  })
 })

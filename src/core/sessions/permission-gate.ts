@@ -18,6 +18,10 @@ export class PermissionGate {
   }
 
   setPending(request: PermissionRequest): Promise<string> {
+    // Reject any existing pending promise so callers don't hang forever
+    if (!this.settled && this.rejectFn) {
+      this.rejectFn(new Error("Superseded by new permission request"));
+    }
     this.request = request;
     this.settled = false;
     this.clearTimeout();

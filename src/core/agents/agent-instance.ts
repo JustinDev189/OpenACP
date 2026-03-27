@@ -276,11 +276,13 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
         { sessionId: this.sessionId, exitCode: code, signal },
         "Agent process exited",
       );
-      if (code !== 0 && code !== null) {
+      if ((code !== 0 && code !== null) || signal) {
         const stderr = this.stderrCapture.getLastLines();
         this.emit('agent_event', {
           type: "error",
-          message: `Agent crashed (exit code ${code})\n${stderr}`,
+          message: signal
+            ? `Agent killed by signal ${signal}\n${stderr}`
+            : `Agent crashed (exit code ${code})\n${stderr}`,
         });
       }
     });
@@ -726,10 +728,20 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
     // Cleanup terminals
     this.terminalManager.destroyAll();
 
-    // Kill agent subprocess
+    // Kill agent subprocess and wait for it to actually exit
     this.child.kill("SIGTERM");
-    setTimeout(() => {
-      if (!this.child.killed) this.child.kill("SIGKILL");
-    }, 10_000);
+    await new Promise<void>((resolve) => {
+      const forceKillTimer = setTimeout(() => {
+        if (!this.child.killed) this.child.kill("SIGKILL");
+        resolve();
+      }, 10_000);
+      if (typeof forceKillTimer === 'object' && forceKillTimer !== null && 'unref' in forceKillTimer) {
+        (forceKillTimer as NodeJS.Timeout).unref();
+      }
+      this.child.on("exit", () => {
+        clearTimeout(forceKillTimer);
+        resolve();
+      });
+    });
   }
 }
