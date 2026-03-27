@@ -9,13 +9,26 @@
 **Tech Stack:** TypeScript, ESM, Vitest, `@openacp/plugin-sdk`, `@slack/bolt`, `@slack/web-api`, `@clack/prompts`, `p-queue`, `nanoid`, `zod`
 
 **Repos involved (all under `/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/`):**
-- `OpenACP` — branch `redesign/microkernel-plugin-architecture`
-- `slack-plugin` — create new branch from `main`
-- `plugin-registry` — create new branch from `main`
+
+| Repo | Path | Branch | Tasks |
+|------|------|--------|-------|
+| `OpenACP` | `openacp-group/OpenACP` | `feat/extract-slack-plugin` (from `redesign/microkernel-plugin-architecture`) | 1, 5, 6 |
+| `slack-plugin` | `openacp-group/slack-plugin` | `feat/redesign-plugin-architecture` (from `main`) | 2, 3, 4 |
+| `plugin-registry` | `openacp-group/plugin-registry` | `feat/update-slack-manifest-redesign` (from `main`) | 7 |
+| All repos | — | — | 8 |
+
+**Task execution order:** Task 1 → Task 2 → Task 3 → Task 4 → Task 5 → Task 6 → Task 7 → Task 8
+
+Tasks 1 must complete before Tasks 3-4 (SDK exports needed for plugin imports).
+Tasks 2-4 (slack-plugin) and Task 5 (OpenACP remove) can run in parallel.
+Task 7 (plugin-registry) is independent.
 
 ---
 
-### Task 1: Update Plugin SDK Exports (OpenACP repo)
+### Task 1: Update Plugin SDK Exports
+
+> **REPO: `OpenACP`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/OpenACP`)
+> **BRANCH: `feat/extract-slack-plugin`** (created from `redesign/microkernel-plugin-architecture`)
 
 **Files:**
 - Modify: `OpenACP/src/packages/plugin-sdk/src/index.ts`
@@ -90,6 +103,9 @@ git commit -m "feat(plugin-sdk): export adapter types for external plugins"
 ---
 
 ### Task 2: Reset slack-plugin Repo
+
+> **REPO: `slack-plugin`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/slack-plugin`)
+> **BRANCH: `feat/redesign-plugin-architecture`** (created from `main`)
 
 **Files:**
 - Modify: `slack-plugin/package.json`
@@ -215,6 +231,10 @@ git commit -m "chore: reset repo for redesign plugin architecture"
 ---
 
 ### Task 3: Copy and Rewrite Slack Plugin Source Files
+
+> **REPO: `slack-plugin`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/slack-plugin`)
+> **BRANCH: `feat/redesign-plugin-architecture`** (same as Task 2)
+> **SOURCE: `OpenACP/src/plugins/slack/`** (on `redesign/microkernel-plugin-architecture` branch)
 
 **Files:**
 - Create: `slack-plugin/src/index.ts`
@@ -415,6 +435,10 @@ git commit -m "feat: add Slack plugin source with @openacp/plugin-sdk imports"
 
 ### Task 4: Copy and Rewrite Slack Plugin Tests
 
+> **REPO: `slack-plugin`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/slack-plugin`)
+> **BRANCH: `feat/redesign-plugin-architecture`** (same as Task 2)
+> **SOURCE: `OpenACP/src/plugins/slack/__tests__/`** (on `redesign/microkernel-plugin-architecture` branch)
+
 **Files:**
 - Create: `slack-plugin/src/__tests__/adapter-lifecycle.test.ts`
 - Create: `slack-plugin/src/__tests__/channel-manager.test.ts`
@@ -476,6 +500,9 @@ git commit -m "test: add Slack plugin tests with SDK imports"
 
 ### Task 5: Remove Slack Built-in Plugin from OpenACP
 
+> **REPO: `OpenACP`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/OpenACP`)
+> **BRANCH: `feat/extract-slack-plugin`** (same as Task 1)
+
 **Files:**
 - Delete: `OpenACP/src/plugins/slack/` (entire directory)
 - Modify: `OpenACP/src/plugins/index.ts`
@@ -536,6 +563,9 @@ git commit -m "feat: remove Slack built-in plugin (extracted to @openacp/adapter
 ---
 
 ### Task 6: Add Registry Discovery to Setup Wizard
+
+> **REPO: `OpenACP`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/OpenACP`)
+> **BRANCH: `feat/extract-slack-plugin`** (same as Task 1)
 
 **Files:**
 - Modify: `OpenACP/src/core/setup/wizard.ts`
@@ -729,6 +759,9 @@ git commit -m "feat(wizard): discover community adapter plugins from registry"
 
 ### Task 7: Update Plugin Registry Manifest
 
+> **REPO: `plugin-registry`** (`/Users/hieu/Documents/Companies/Lab3/opensource/openacp-group/plugin-registry`)
+> **BRANCH: `feat/update-slack-manifest-redesign`** (created from `main`)
+
 **Files:**
 - Modify: `plugin-registry/plugins/openacp--adapter-slack.json`
 
@@ -788,6 +821,8 @@ git commit -m "feat: update Slack adapter manifest for redesign architecture"
 ---
 
 ### Task 8: Final Verification
+
+> **ALL REPOS** — cross-repo verification
 
 - [ ] **Step 1: Verify OpenACP builds and tests pass**
 
